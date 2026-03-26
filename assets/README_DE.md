@@ -90,6 +90,9 @@ Einmal mit `metaclaw setup` konfigurieren, dann startet `metaclaw start` den Pro
 | `rl` | | Skills + RL-Training (GRPO). Trainiert sofort, wenn ein Batch voll ist. Optional OPD für Lehrer-Destillation. |
 | `madmax` | ✅ | Skills + RL + Smart-Scheduler. RL-Gewichtsupdates laufen nur in Schlaf-/Leerlauf-/Meeting-Fenstern. |
 
+### **Langzeitgedächtnis**
+MetaClaw kann Fakten, Präferenzen und Projektverlauf über Sitzungen hinweg speichern und pro Runde relevanten Kontext einspielen — dein Agent erinnert sich an das, was du gesagt hast, auch Wochen später.
+
 ### **Asynchron by Design**
 Serving, Reward Modeling und Training sind vollständig entkoppelt. Der Agent antwortet weiterhin, während Bewertung und Optimierung parallel laufen.
 
@@ -99,6 +102,16 @@ Serving, Reward Modeling und Training sind vollständig entkoppelt. Der Agent an
 
 ### 1. Installation
 
+**OpenClaw (One-Click):** Nutze das Release [v0.4.0](https://github.com/aiming-lab/MetaClaw/releases/tag/v0.4.0) — führe die Befehle unten aus, dann `metaclaw setup` und `metaclaw start`. Mehr Infos (Windows, Spiegelserver, Konfiguration, Troubleshooting): [`extensions/metaclaw-openclaw/README.md`](../extensions/metaclaw-openclaw/README.md).
+
+```bash
+curl -LO https://github.com/aiming-lab/MetaClaw/releases/download/v0.4.0/metaclaw-plugin.zip
+unzip metaclaw-plugin.zip -d ~/.openclaw/extensions/metaclaw-openclaw
+openclaw plugins enable metaclaw-openclaw && openclaw gateway restart
+```
+
+**pip** (PyPI oder dieses Repository):
+
 ```bash
 pip install -e .                        # skills_only-Modus (leichtgewichtig)
 pip install -e ".[rl]"                  # + RL-Trainingsunterstützung (torch, transformers, tinker)
@@ -106,6 +119,22 @@ pip install -e ".[evolve]"              # + Skill-Evolution via OpenAI-kompatibl
 pip install -e ".[scheduler]"           # + Google Calendar Integration für Scheduler
 pip install -e ".[rl,evolve,scheduler]" # empfohlen: vollständiges RL + Scheduler-Setup
 ```
+(Freiwillig) WeChat-Personenkonto-Brücke (benötigt [Node.js](https://nodejs.org/) im PATH, ≥ 22 laut SDK empfohlen).
+
+- Bei Installation über das **OpenClaw-One-Click-Plugin** werden die WeChat-Node-Abhängigkeiten automatisch installiert.
+- Bei Installation über **pip** nach `pip install` einmal die Node-Abhängigkeiten installieren:
+
+```bash
+cd metaclaw/wechat_node && npm install
+```
+
+Dann WeChat aktivieren:
+
+```bash
+metaclaw config wechat.enabled true
+```
+
+Wenn du `wechat.bridge_dir` in der Konfiguration setzt, führe `npm install` in diesem Verzeichnis aus. Vollständige Anleitung (QR-Login, erneutes Anmelden, Troubleshooting): [`metaclaw/wechat_node/README.md`](../metaclaw/wechat_node/README.md).
 
 Wenn du `rl.backend=mint` verwenden willst, installiere das MinT-Kompatibilitätspaket separat in derselben Umgebung, zum Beispiel [`mindlab-toolkit`](https://github.com/MindLab-Research/mindlab-toolkit). Für `rl.backend=weaver` installiere separat [`nex-weaver`](https://github.com/nex-agi/weaver). MetaClaw hält diese Abhängigkeiten absichtlich aus dem Standardpaket heraus, damit RL-Nutzer Tinker, MinT oder Weaver explizit wählen können.
 
@@ -115,11 +144,14 @@ Wenn du `rl.backend=mint` verwenden willst, installiere das MinT-Kompatibilität
 metaclaw setup
 ```
 
-Der interaktive Assistent führt dich durch die Auswahl des LLM-Anbieters (Kimi, Qwen, MiniMax oder benutzerdefiniert), API-Schlüssel und optionale RL-Aktivierung.
+Der interaktive Assistent führt dich durch:
+1. **Persönlichen Agenten wählen** — `openclaw`, `copaw`, `ironclaw`, `picoclaw`, `zeroclaw`, `nanoclaw`, `nemoclaw` oder `none` (MetaClaw konfiguriert ihn beim Start automatisch)
+2. **LLM-Anbieter wählen** — Kimi, Qwen, OpenAI, Volcano Engine oder benutzerdefiniert
+3. **API-Schlüssel eingeben** und optional RL-Training aktivieren
 
 Der RL-Pfad von MetaClaw kann explizit zwischen `tinker`, `mint` und `weaver` wechseln. `auto` ist die empfohlene Voreinstellung und kann MinT oder Weaver weiterhin aus den entsprechenden Credentials oder Base-URLs ableiten, wenn die Pakete installiert sind.
 
-**Tinker** (Standard):
+**Tinker**:
 
 ```bash
 metaclaw config rl.backend tinker
@@ -183,9 +215,10 @@ Wenn Sie MetaClaw mit `--daemon` starten, wartet der Befehl, bis der lokale Prox
 
 ```yaml
 mode: madmax               # "madmax" | "rl" | "skills_only"
+claw_type: openclaw        # "openclaw" | "copaw" | "ironclaw" | "picoclaw" | "zeroclaw" | "nanoclaw" | "nemoclaw" | "hermes" | "none"
 
 llm:
-  provider: kimi            # kimi | qwen | openai | minimax | custom
+  provider: kimi            # kimi | qwen | openai | minimax | novita | openrouter | volcengine | custom
   model_id: moonshotai/Kimi-K2.5
   api_base: https://api.moonshot.cn/v1
   api_key: sk-...
@@ -227,7 +260,10 @@ opd:
   teacher_api_key: ""       # API-Schlüssel des Lehrermodells
   kl_penalty_coef: 1.0      # KL-Strafkoeffizient für OPD
 
-max_context_tokens: 20000   # Token-Obergrenze vor Kürzung
+max_context_tokens: 20000   # Obergrenze für Prompt-Tokens vor Trunkierung; 0 = keine Trunkierung
+                            # (empfohlen in skills_only mit großen Cloud-Modellen)
+context_window: 0           # dem Agenten gemeldetes Kontextfenster (z. B. OpenClaw-Kompaktierungsschwelle);
+                            # 0 = auto (ca. 200 000 in skills_only, 32 768 in rl/madmax)
 
 scheduler:                  # v0.3: Meta-Learning-Scheduler (auto-aktiviert im MadMax-Modus)
   enabled: false            # MadMax-Modus aktiviert automatisch; für RL-Modus manuell setzen
@@ -251,6 +287,8 @@ scheduler:                  # v0.3: Meta-Learning-Scheduler (auto-aktiviert im M
 
 Der leichteste Modus. Kein GPU, kein RL-Backend nötig. MetaClaw kapselt dein LLM hinter einem Proxy, der bei jedem Schritt relevante Skills injiziert und nach jedem Gespräch automatisch neue Skills zusammenfasst.
 
+Für benutzerdefinierte OpenAI-kompatible Anbieter setze `llm.api_base` auf die vollständige Chat-API-Basis (meist mit `/v1`, z. B. `https://your-gateway.example/v1`). Im Modus `skills_only` nutzt MetaClaw denselben Endpunkt für Prompt-Kompression und zugehörige Hilfs-LLM-Aufrufe, sofern kein separater Evolver-Endpunkt konfiguriert ist.
+
 Skills sind kurze Markdown-Anweisungen in `~/.metaclaw/skills/` als einzelne `SKILL.md`-Dateien. Die Bibliothek wächst automatisch mit der Nutzung.
 
 Um die eingebaute Skill-Bank vorzuladen (40+ Skills für Coding, Security, agentische Aufgaben usw.):
@@ -267,7 +305,7 @@ cp -r memory_data/skills/* ~/.metaclaw/skills/
 
 Alles aus dem Skills-Modus, plus kontinuierliches RL-Fine-Tuning aus Live-Gesprächen. Jeder Gesprächszug wird tokenisiert und als Trainingsbeispiel eingereicht. Ein Richter-LLM (PRM) bewertet Antworten asynchron, und ein Tinker-kompatibles Backend (Tinker Cloud, MinT oder Weaver) führt LoRA-Fine-Tuning mit Hot-Swap-Gewichten durch.
 
-**Tinker** (Standard):
+**Tinker**:
 
 ```bash
 metaclaw config rl.backend tinker

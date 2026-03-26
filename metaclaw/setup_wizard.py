@@ -21,6 +21,22 @@ _PROVIDER_PRESETS = {
         "api_base": "https://api.openai.com/v1",
         "model_id": "gpt-4o",
     },
+    "minimax": {
+        "api_base": "https://api.minimax.chat/v1",
+        "model_id": "",
+    },
+    "novita": {
+        "api_base": "https://api.novita.ai/v3/openai",
+        "model_id": "",
+    },
+    "openrouter": {
+        "api_base": "https://openrouter.ai/api/v1",
+        "model_id": "",
+    },
+    "volcengine": {
+        "api_base": "https://ark.cn-beijing.volces.com/api/v3",
+        "model_id": "doubao-seed-2-0-pro-260215",
+    },
     "custom": {
         "api_base": "",
         "model_id": "",
@@ -101,14 +117,19 @@ class SetupWizard:
         current_provider = current_llm.get("provider", "custom")
         provider = _prompt_choice(
             "LLM provider",
-            ["kimi", "qwen", "openai", "custom"],
+            ["kimi", "qwen", "openai", "minimax", "novita", "openrouter", "volcengine", "custom"],
             default=current_provider,
         )
         preset = _PROVIDER_PRESETS[provider]
-        api_base = _prompt(
-            "API base URL",
-            default=current_llm.get("api_base") or preset["api_base"],
-        )
+        if provider == "custom":
+            api_base = _prompt(
+                "API base URL",
+                default=current_llm.get("api_base") or preset["api_base"],
+            )
+        else:
+            # Named providers use a fixed OpenAI-compatible endpoint; no prompt.
+            api_base = preset["api_base"]
+            print(f"  Using fixed API base URL for {provider}: {api_base}")
         model_id = _prompt(
             "Model ID",
             default=current_llm.get("model_id") or preset["model_id"],

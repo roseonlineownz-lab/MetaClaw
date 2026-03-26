@@ -90,6 +90,9 @@ https://github.com/user-attachments/assets/d86a41a8-4181-4e3a-af0e-dc453a6b8594
 | `rl` | | Skills + RL 训练（GRPO）。batch 满后立即训练。可选 OPD 进行教师蒸馏。 |
 | `madmax` | ✅ | Skills + RL + 智能调度器。RL 权重更新只在睡眠/空闲/会议窗口进行。 |
 
+### **长期记忆**
+MetaClaw 可跨会话持久保存事实、偏好与项目历史，并在每轮对话中检索相关上下文注入提示——让你的 Agent 记得你说过的话，即使相隔数周。
+
 ### **完全异步设计**
 推理服务、奖励建模与训练完全解耦。Agent 持续响应的同时,打分与优化在后台并行进行。
 
@@ -99,6 +102,16 @@ https://github.com/user-attachments/assets/d86a41a8-4181-4e3a-af0e-dc453a6b8594
 
 ### 1. 安装
 
+**OpenClaw（一键安装）：** 请使用 [v0.4.0](https://github.com/aiming-lab/MetaClaw/releases/tag/v0.4.0) 版本：运行下方命令后执行 `metaclaw setup` 与 `metaclaw start`。更多说明（Windows、镜像、配置、排错）见 [`extensions/metaclaw-openclaw/README.md`](../extensions/metaclaw-openclaw/README.md)。
+
+```bash
+curl -LO https://github.com/aiming-lab/MetaClaw/releases/download/v0.4.0/metaclaw-plugin.zip
+unzip metaclaw-plugin.zip -d ~/.openclaw/extensions/metaclaw-openclaw
+openclaw plugins enable metaclaw-openclaw && openclaw gateway restart
+```
+
+**pip**（PyPI 或本仓库）：
+
 ```bash
 pip install -e .                        # skills_only 模式（轻量）
 pip install -e ".[rl]"                  # + RL 训练支持（torch、transformers、tinker）
@@ -106,6 +119,22 @@ pip install -e ".[evolve]"              # + 通过 OpenAI 兼容 LLM 进行 Skil
 pip install -e ".[scheduler]"           # + Google Calendar 调度器集成
 pip install -e ".[rl,evolve,scheduler]" # 推荐：完整 RL + 调度器配置
 ```
+（可选）微信个人号桥接（需本机 [Node.js](https://nodejs.org/) 在 PATH 中可用，SDK 建议 ≥ 22）。
+
+- 若通过 **OpenClaw 一键插件**安装，微信相关 Node 依赖会自动安装。
+- 若通过 **pip** 安装，请在 `pip install` 之后执行一次 Node 依赖安装：
+
+```bash
+cd metaclaw/wechat_node && npm install
+```
+
+然后启用微信：
+
+```bash
+metaclaw config wechat.enabled true
+```
+
+若在配置中设置了 `wechat.bridge_dir`，请在该目录执行 `npm install`。完整说明（扫码登录、重新登录、排错）见 [`metaclaw/wechat_node/README.md`](../metaclaw/wechat_node/README.md)。
 
 如果你要使用 `rl.backend=mint`,请在同一环境里额外安装 MinT 兼容包,例如 [`mindlab-toolkit`](https://github.com/MindLab-Research/mindlab-toolkit)。如果你要使用 `rl.backend=weaver`,请另行安装 [`nex-weaver`](https://github.com/nex-agi/weaver)。MetaClaw 不会把这些依赖放进默认安装中,这样 RL 用户可以明确选择 Tinker、MinT 或 Weaver。
 
@@ -115,11 +144,14 @@ pip install -e ".[rl,evolve,scheduler]" # 推荐：完整 RL + 调度器配置
 metaclaw setup
 ```
 
-交互式向导会引导你选择 LLM 提供商（Kimi、Qwen、MiniMax 或自定义）,填写 API Key,并可选开启 RL 训练。
+交互式向导会引导你完成：
+1. **选择个人 Agent** — `openclaw`、`copaw`、`ironclaw`、`picoclaw`、`zeroclaw`、`nanoclaw`、`nemoclaw` 或 `none`（`metaclaw start` 时会自动配置）
+2. **选择 LLM 提供商** — Kimi、Qwen、OpenAI、Volcano Engine、自定义等
+3. **填写 API Key**，并可选择是否启用 RL 训练
 
 MetaClaw 的 RL 路径可以显式切换 `tinker`、`mint` 和 `weaver`。推荐默认值是 `auto`；当环境里安装了 MinT 或 Weaver 兼容包时,它仍然可以根据对应风格的凭证或 base URL 自动识别。
 
-**Tinker**（默认）:
+**Tinker**:
 
 ```bash
 metaclaw config rl.backend tinker
@@ -153,7 +185,7 @@ metaclaw config rl.model Qwen/Qwen3-8B
 metaclaw start
 ```
 
-就这些。MetaClaw 启动代理,自动配置 OpenClaw 并重启网关。打开 OpenClaw 开始对话,每轮都会注入 Skill,对话结束后自动总结为新 Skill。
+就这些。MetaClaw 启动代理，自动配置你所选的个人 Agent 并重启网关。打开你的 Agent 开始对话——每轮都会注入 Skill，会话结束后会自动总结为新 Skill。
 
 ---
 
@@ -183,9 +215,10 @@ metaclaw config KEY VALUE       # 设置配置项
 
 ```yaml
 mode: madmax               # "madmax" | "rl" | "skills_only"
+claw_type: openclaw        # "openclaw" | "copaw" | "ironclaw" | "picoclaw" | "zeroclaw" | "nanoclaw" | "nemoclaw" | "hermes" | "none"
 
 llm:
-  provider: kimi            # kimi | qwen | openai | minimax | custom
+  provider: kimi            # kimi | qwen | openai | minimax | novita | openrouter | volcengine | custom
   model_id: moonshotai/Kimi-K2.5
   api_base: https://api.moonshot.cn/v1
   api_key: sk-...
@@ -227,7 +260,10 @@ opd:
   teacher_api_key: ""       # 教师模型 API Key
   kl_penalty_coef: 1.0      # OPD 的 KL 惩罚系数
 
-max_context_tokens: 20000   # 截断前的 prompt token 上限
+max_context_tokens: 20000   # 截断前 prompt token 上限；0 表示不截断（大上下文云端模型在 skills_only 下推荐）
+                            #
+context_window: 0           # 向 Agent 声明的上下文窗口（如 OpenClaw 压缩阈值）；0 为自动
+                            # （skills_only 约 200000，rl/madmax 约 32768）
 
 scheduler:                  # v0.3：元学习调度器（madmax 模式下自动启用）
   enabled: false            # madmax 模式自动启用；rl 模式需手动设置
@@ -251,6 +287,8 @@ scheduler:                  # v0.3：元学习调度器（madmax 模式下自动
 
 最轻量的模式。无需 GPU,无需 RL 后端。MetaClaw 将你的 LLM 封装在代理后面,每轮注入相关 Skill,对话结束后自动总结新 Skill。
 
+若使用 OpenAI 兼容的自定义服务商，请将 `llm.api_base` 设为完整的对话 API 根地址（通常以 `/v1` 结尾，例如 `https://your-gateway.example/v1`）。在 `skills_only` 模式下，除非你单独配置 evolver 端点，否则 MetaClaw 会用同一地址完成提示压缩等辅助 LLM 调用。
+
 Skill 是存放在 `~/.metaclaw/skills/` 中的简短 Markdown 指令,以独立的 `SKILL.md` 文件组织。Skill 库随使用自动增长。
 
 预加载内置 Skill 库（涵盖编码、安全、Agent 任务等 40+ 个 Skill）：
@@ -267,7 +305,7 @@ cp -r memory_data/skills/* ~/.metaclaw/skills/
 
 在 Skills 模式基础上,增加基于实时对话的持续 RL 微调。每轮对话被 tokenize 并作为训练样本提交。裁判 LLM（PRM）异步为回复打分,Tinker 兼容后端（Tinker 云端、MinT 或 Weaver）执行 LoRA 微调并热更新权重。
 
-**Tinker**（默认）:
+**Tinker**:
 
 ```bash
 metaclaw config rl.backend tinker

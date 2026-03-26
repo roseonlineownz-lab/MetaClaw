@@ -90,6 +90,9 @@ Cau hinh mot lan voi `metaclaw setup`, sau do `metaclaw start` se khoi dong prox
 | `rl` | | Skill + huan luyen RL (GRPO). Huan luyen ngay khi batch day. OPD tuy chon de chung cat tu mo hinh giao vien. |
 | `madmax` | ✅ | Skill + RL + bo lap lich thong minh. Cap nhat trong so RL chi chay trong khoang ngu/ranh/hop. |
 
+### **Bộ nhớ dài hạn**
+MetaClaw có thể lưu sự kiện, sở thích và lịch sử dự án qua các phiên và chèn ngữ cảnh liên quan mỗi lượt — để agent nhớ những gì bạn đã nói, kể cả nhiều tuần sau.
+
 ### **Thiet ke hoan toan bat dong bo**
 Phuc vu, mo hinh hoa phan thuong va huan luyen duoc tach roi hoan toan. Agent tiep tuc phan hoi trong khi cham diem va toi uu hoa chay song song.
 
@@ -99,6 +102,16 @@ Phuc vu, mo hinh hoa phan thuong va huan luyen duoc tach roi hoan toan. Agent ti
 
 ### 1. Cai dat
 
+**OpenClaw (một cú nhấp):** dùng bản phát hành [v0.4.0](https://github.com/aiming-lab/MetaClaw/releases/tag/v0.4.0) — chạy các lệnh bên dưới, rồi `metaclaw setup` và `metaclaw start`. Chi tiết (Windows, mirror, cấu hình, xử lý sự cố): [`extensions/metaclaw-openclaw/README.md`](../extensions/metaclaw-openclaw/README.md).
+
+```bash
+curl -LO https://github.com/aiming-lab/MetaClaw/releases/download/v0.4.0/metaclaw-plugin.zip
+unzip metaclaw-plugin.zip -d ~/.openclaw/extensions/metaclaw-openclaw
+openclaw plugins enable metaclaw-openclaw && openclaw gateway restart
+```
+
+**pip** (PyPI hoặc kho mã này):
+
 ```bash
 pip install -e .                        # che do skills_only (nhe)
 pip install -e ".[rl]"                  # + ho tro huan luyen RL (torch, transformers, tinker)
@@ -106,6 +119,22 @@ pip install -e ".[evolve]"              # + tien hoa Skill qua LLM tuong thich O
 pip install -e ".[scheduler]"           # + tich hop Google Calendar cho bo lap lich
 pip install -e ".[rl,evolve,scheduler]" # khuyen nghi: cau hinh day du RL + bo lap lich
 ```
+(Tùy chọn) Cầu tài khoản cá nhân WeChat (cần [Node.js](https://nodejs.org/) trong PATH; SDK khuyến nghị ≥ 22).
+
+- Nếu cài bằng **plugin OpenClaw một cú nhấp**, phụ thuộc Node cho WeChat được cài tự động.
+- Nếu cài bằng **pip**, sau `pip install` hãy cài phụ thuộc Node một lần:
+
+```bash
+cd metaclaw/wechat_node && npm install
+```
+
+Sau đó bật WeChat:
+
+```bash
+metaclaw config wechat.enabled true
+```
+
+Nếu đặt `wechat.bridge_dir` trong cấu hình, chạy `npm install` trong thư mục đó. Hướng dẫn đầy đủ (đăng nhập QR, đăng nhập lại, xử lý sự cố): [`metaclaw/wechat_node/README.md`](../metaclaw/wechat_node/README.md).
 
 Neu ban muon su dung `rl.backend=mint`, hay cai dat goi tuong thich MinT rieng trong cung moi truong, vi du [`mindlab-toolkit`](https://github.com/MindLab-Research/mindlab-toolkit). Neu ban muon su dung `rl.backend=weaver`, hay cai dat [`nex-weaver`](https://github.com/nex-agi/weaver) rieng. MetaClaw khong dua cac phu thuoc nay vao goi mac dinh de nguoi dung RL co the chon ro rang Tinker, MinT hoac Weaver.
 
@@ -115,11 +144,14 @@ Neu ban muon su dung `rl.backend=mint`, hay cai dat goi tuong thich MinT rieng t
 metaclaw setup
 ```
 
-Trinh huong dan tuong tac se yeu cau ban chon nha cung cap LLM (Kimi, Qwen, MiniMax hoac tuy chinh), nhap API key va tuy chon bat huan luyen RL.
+Trình hướng dẫn tương tác sẽ yêu cầu bạn:
+1. **Chọn agent cá nhân** — `openclaw`, `copaw`, `ironclaw`, `picoclaw`, `zeroclaw`, `nanoclaw`, `nemoclaw` hoặc `none` (MetaClaw tự cấu hình khi khởi động)
+2. **Chọn nhà cung cấp LLM** — Kimi, Qwen, OpenAI, Volcano Engine hoặc tùy chỉnh
+3. **Nhập khóa API** và tùy chọn bật huấn luyện RL
 
 Duong dan RL cua MetaClaw co the chuyen doi ro rang giua `tinker`, `mint` va `weaver`. `auto` la gia tri mac dinh duoc khuyen nghi va van se tu dong nhan dien MinT hoac Weaver tu cac thong tin xac thuc hoac base URL tuong ung khi goi da duoc cai dat.
 
-**Tinker** (mặc định):
+**Tinker**:
 
 ```bash
 metaclaw config rl.backend tinker
@@ -153,7 +185,7 @@ Cac bi danh cu `rl.tinker_api_key` va `rl.tinker_base_url` van duoc chap nhan de
 metaclaw start
 ```
 
-Vay la xong. MetaClaw khoi dong proxy, tu dong cau hinh OpenClaw va khoi dong lai gateway. Mo OpenClaw va bat dau tro chuyen. Skill duoc tiem o moi luot hoi thoai va phien lam viec duoc tu dong tom tat thanh Skill moi khi ban ket thuc.
+Xong. MetaClaw khoi dong proxy, tu cau hinh agent ca nhan da chon va khoi dong lai gateway. Mo agent va tro chuyen — skill duoc chen moi luot va phien duoc tom tat tu dong thanh skill moi khi ket thuc.
 
 ---
 
@@ -183,9 +215,10 @@ Khi khoi dong MetaClaw voi `--daemon`, lenh se doi cho den khi proxy cuc bo san 
 
 ```yaml
 mode: madmax               # "madmax" | "rl" | "skills_only"
+claw_type: openclaw        # "openclaw" | "copaw" | "ironclaw" | "picoclaw" | "zeroclaw" | "nanoclaw" | "nemoclaw" | "hermes" | "none"
 
 llm:
-  provider: kimi            # kimi | qwen | openai | minimax | custom
+  provider: kimi            # kimi | qwen | openai | minimax | novita | openrouter | volcengine | custom
   model_id: moonshotai/Kimi-K2.5
   api_base: https://api.moonshot.cn/v1
   api_key: sk-...
@@ -227,7 +260,10 @@ opd:
   teacher_api_key: ""       # API key cua mo hinh giao vien
   kl_penalty_coef: 1.0      # he so phat KL cho OPD
 
-max_context_tokens: 20000   # gioi han token prompt truoc khi cat
+max_context_tokens: 20000   # gioi han token prompt truoc khi cat; 0 = khong cat
+                            # (khuyen nghi trong skills_only voi mo hinh cloud ngu canh lon)
+context_window: 0           # cua so ngu canh bao cho agent (vi du nguong nen OpenClaw);
+                            # 0 = tu dong (khoang 200 000 trong skills_only, 32 768 trong rl/madmax)
 
 scheduler:                  # v0.3: bo lap lich meta-learning (tu dong bat trong che do madmax)
   enabled: false            # che do madmax tu dong bat; che do rl can dat thu cong
@@ -251,6 +287,8 @@ scheduler:                  # v0.3: bo lap lich meta-learning (tu dong bat trong
 
 Che do nhe nhat. Khong can GPU, khong can backend RL. MetaClaw dat LLM cua ban phia sau mot proxy tiem cac Skill phu hop o moi luot hoi thoai, sau do tu dong tom tat Skill moi sau moi cuoc hoi thoai.
 
+Với nhà cung cấp tùy chỉnh tương thích OpenAI, đặt `llm.api_base` thành URL cơ sở đầy đủ của API chat (thường kết thúc bằng `/v1`, ví dụ `https://your-gateway.example/v1`). Ở chế độ `skills_only`, MetaClaw tái sử dụng cùng endpoint đó để nén prompt và các lời gọi LLM phụ trợ, trừ khi bạn cấu hình endpoint evolver riêng.
+
 Skill la cac huong dan Markdown ngan duoc luu trong `~/.metaclaw/skills/` duoi dang cac tep `SKILL.md` rieng le. Thu vien Skill se lon dan tu dong theo qua trinh su dung.
 
 De tai truoc kho Skill co san (hon 40 Skill bao gom lap trinh, bao mat, tac vu agent, v.v.):
@@ -267,7 +305,7 @@ cp -r memory_data/skills/* ~/.metaclaw/skills/
 
 Tat ca tinh nang cua Che do Skills, cong them tinh chinh RL lien tuc tu cac cuoc hoi thoai truc tiep. Moi luot hoi thoai duoc tokenize va gui di lam mau huan luyen. LLM giam khao (PRM) cham diem phan hoi bat dong bo, va backend tuong thich Tinker (Tinker cloud, MinT hoac Weaver) thuc hien tinh chinh LoRA voi cap nhat nong trong so.
 
-**Tinker** (mặc định):
+**Tinker**:
 
 ```bash
 metaclaw config rl.backend tinker

@@ -153,7 +153,7 @@ metaclaw setup
 
 The interactive wizard will ask you to:
 1. **Choose your personal agent** — `openclaw`, `copaw`, `ironclaw`, `picoclaw`, `zeroclaw`, `nanoclaw`, `nemoclaw`, or `none` (MetaClaw will auto-configure it on start)
-2. **Choose your LLM provider** — Kimi, Qwen, MiniMax, or custom
+2. **Choose your LLM provider** — Kimi, Qwen, OpenAI, Volcano Engine, or custom
 3. **Enter your API key** and optionally enable RL training
 
 MetaClaw's RL path can switch explicitly between `tinker`, `mint`, and `weaver`. `auto` is the recommended default and will infer the backend from credentials, base URLs, or environment variables when the corresponding package is installed.
@@ -283,7 +283,7 @@ mode: madmax               # "madmax" | "rl" | "skills_only"
 claw_type: openclaw        # "openclaw" | "copaw" | "ironclaw" | "picoclaw" | "zeroclaw" | "nanoclaw" | "nemoclaw" | "hermes" | "none"
 
 llm:
-  provider: kimi            # kimi | qwen | openai | minimax | custom
+  provider: kimi            # kimi | qwen | openai | minimax | novita | openrouter | volcengine | custom
   model_id: moonshotai/Kimi-K2.5
   api_base: https://api.moonshot.cn/v1
   api_key: sk-...
