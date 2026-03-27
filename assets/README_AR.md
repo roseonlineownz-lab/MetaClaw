@@ -106,7 +106,7 @@ https://github.com/user-attachments/assets/d86a41a8-4181-4e3a-af0e-dc453a6b8594
 
 ```bash
 curl -LO https://github.com/aiming-lab/MetaClaw/releases/download/v0.4.0/metaclaw-plugin.zip
-unzip metaclaw-plugin.zip -d ~/.openclaw/extensions/metaclaw-openclaw
+unzip metaclaw-plugin.zip -d ~/.openclaw/extensions
 openclaw plugins enable metaclaw-openclaw && openclaw gateway restart
 ```
 

@@ -8,7 +8,7 @@ One-click installer for [MetaClaw](https://github.com/aiming-lab/MetaClaw) as an
 
 ```bash
 curl -LO https://github.com/aiming-lab/MetaClaw/releases/download/v0.4.0/metaclaw-plugin.zip
-unzip metaclaw-plugin.zip -d ~/.openclaw/extensions/metaclaw-openclaw
+unzip metaclaw-plugin.zip -d ~/.openclaw/extensions
 openclaw plugins enable metaclaw-openclaw
 openclaw gateway restart
 ```
@@ -22,7 +22,7 @@ openclaw gateway restart
 
 ```powershell
 Invoke-WebRequest -Uri https://github.com/aiming-lab/MetaClaw/releases/download/v0.4.0/metaclaw-plugin.zip -OutFile metaclaw-plugin.zip
-Expand-Archive metaclaw-plugin.zip -DestinationPath $env:USERPROFILE\.openclaw\extensions\metaclaw-openclaw
+Expand-Archive metaclaw-plugin.zip -DestinationPath $env:USERPROFILE\.openclaw\extensions
 openclaw plugins enable metaclaw-openclaw
 openclaw gateway restart
 ```

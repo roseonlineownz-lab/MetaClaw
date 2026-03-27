@@ -106,7 +106,7 @@ Le serving, la modelisation des recompenses et l'entrainement sont entierement d
 
 ```bash
 curl -LO https://github.com/aiming-lab/MetaClaw/releases/download/v0.4.0/metaclaw-plugin.zip
-unzip metaclaw-plugin.zip -d ~/.openclaw/extensions/metaclaw-openclaw
+unzip metaclaw-plugin.zip -d ~/.openclaw/extensions
 openclaw plugins enable metaclaw-openclaw && openclaw gateway restart
 ```
 

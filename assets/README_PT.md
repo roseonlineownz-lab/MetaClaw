@@ -106,7 +106,7 @@ Servico, modelagem de recompensa e treinamento sao totalmente desacoplados. O ag
 
 ```bash
 curl -LO https://github.com/aiming-lab/MetaClaw/releases/download/v0.4.0/metaclaw-plugin.zip
-unzip metaclaw-plugin.zip -d ~/.openclaw/extensions/metaclaw-openclaw
+unzip metaclaw-plugin.zip -d ~/.openclaw/extensions
 openclaw plugins enable metaclaw-openclaw && openclaw gateway restart
 ```
 
