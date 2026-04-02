@@ -18,6 +18,7 @@ _DEFAULTS: dict = {
     "mode": "auto",
     "llm": {
         "provider": "custom",
+        "auth_method": "api_key",   # "api_key" | "oauth_token"
         "model_id": "",
         "api_base": "",
         "api_key": "",
@@ -215,12 +216,34 @@ class ConfigStore:
             ).expanduser()
         )
 
+        # Resolve auth: for CLI providers, pull credential from auth store
+        llm_provider = llm.get("provider", "custom")
+        llm_auth_method = llm.get("auth_method", "api_key")
+        # Auto-detect auth_method for known CLI providers
+        if llm_provider in ("anthropic", "openai-codex", "gemini") and llm_auth_method == "api_key":
+            # If no api_key configured, assume oauth_token (CLI mode)
+            if not llm.get("api_key", ""):
+                llm_auth_method = "oauth_token"
+
+        llm_api_key_resolved = llm.get("api_key", "")
+        if llm_provider in ("anthropic", "openai-codex", "gemini") and not llm_api_key_resolved:
+            try:
+                from .auth_store import AuthStore
+                store = AuthStore()
+                profile = store.get_best_profile(llm_provider)
+                if profile:
+                    llm_api_key_resolved = profile.credential
+            except Exception:
+                pass
+
         return MetaClawConfig(
             # Mode
             mode=mode,
             # LLM for skills_only forwarding
+            llm_provider=llm_provider,
+            llm_auth_method=llm_auth_method,
             llm_api_base=llm.get("api_base", ""),
-            llm_api_key=llm.get("api_key", ""),
+            llm_api_key=llm_api_key_resolved,
             llm_model_id=llm.get("model_id", ""),
             # Proxy
             proxy_port=proxy.get("port", 30000),
@@ -308,6 +331,7 @@ class ConfigStore:
         lines = [
             f"mode:            {mode}",
             f"llm.provider:    {llm.get('provider', '?')}",
+            f"llm.auth_method: {llm.get('auth_method', 'api_key')}",
             f"llm.model_id:    {llm.get('model_id', '?')}",
             f"llm.api_base:    {llm.get('api_base', '?')}",
             f"proxy.port:      {data.get('proxy', {}).get('port', 30000)}",

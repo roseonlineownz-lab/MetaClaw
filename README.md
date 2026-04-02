@@ -30,7 +30,7 @@
 
 <br/>
 
-[Overview](#-overview) • [Quick Start](#-quick-start) • [Multi-Claw Support](#-multi-claw-support) • [Configuration](#️-configuration) • [Skills Mode](#-skills-mode) • [RL Mode](#-rl-mode) • [MadMax Mode](#-madmax-mode-default) • [Memory](#-memory) • [Citation](#-citation)
+[Overview](#-overview) • [Quick Start](#-quick-start) • [Multi-Claw Support](#-multi-claw-support) • [Configuration](#️-configuration) • [Skills Mode](#-skills-mode) • [RL Mode](#-rl-mode) • [Auto Mode](#-auto-mode-default) • [Memory](#-memory) • [Citation](#-citation)
 
 </div>
 
@@ -43,9 +43,7 @@
 
 ```bash
 metaclaw setup              # one-time config wizard
-metaclaw start              # default: madmax mode — skills + scheduled RL training
-metaclaw start --daemon     # run in background, logs -> ~/.metaclaw/metaclaw.log
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # custom daemon log path
+metaclaw start              # default: auto mode — skills + scheduled RL training
 metaclaw start --mode rl    # RL without scheduler (trains immediately on full batch)
 metaclaw start --mode skills_only  # skills only, no RL (no Tinker needed)
 ```
@@ -95,7 +93,7 @@ Configure once with `metaclaw setup`, then `metaclaw start` brings up the proxy,
 |------|---------|--------------|
 | `skills_only` | | Proxy your LLM API. Skills injected and auto-summarized after each session. No GPU/Tinker required. |
 | `rl` | | Skills + RL training (GRPO). Trains immediately when a batch is full. Optional OPD for teacher distillation. |
-| `madmax` | ✅ | Skills + RL + smart scheduler. RL weight updates only run during sleep/idle/meeting windows. |
+| `auto` | ✅ | Skills + RL + smart scheduler. RL weight updates only run during sleep/idle/meeting windows. |
 
 ### **Long-term memory**
 MetaClaw can persist facts, preferences, and project history across sessions and inject relevant context at each turn — so your agent remembers what you've told it, even weeks later.
@@ -264,31 +262,36 @@ Configuration lives in `~/.metaclaw/config.yaml`, created by `metaclaw setup`.
 
 ```
 metaclaw setup                  # Interactive first-time configuration wizard
-metaclaw start                  # Start MetaClaw (default: madmax mode)
-metaclaw start --daemon         # Start MetaClaw in background
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # Custom daemon log path
+metaclaw start                  # Start MetaClaw (default: auto mode)
 metaclaw start --mode rl        # Force RL mode (no scheduler) for this session
 metaclaw start --mode skills_only  # Force skills-only mode for this session
 metaclaw stop                   # Stop a running MetaClaw instance
 metaclaw status                 # Check proxy health, running mode, and scheduler state
 metaclaw config show            # View current configuration
 metaclaw config KEY VALUE       # Set a config value
+metaclaw auth paste-token --provider anthropic      # Store OAuth token (anthropic | openai-codex | gemini)
+metaclaw auth status                                # Show all stored auth profiles
 ```
 
-When you start MetaClaw with `--daemon`, the command waits until the local proxy becomes healthy before returning. Use `metaclaw status` to verify readiness and `metaclaw stop` to stop the background process.
+When you start MetaClaw, the command waits until the local proxy becomes healthy before returning. Use `metaclaw status` to verify readiness and `metaclaw stop` to stop the background process.
 
 <details>
 <summary><b>Full config reference (click to expand)</b></summary>
 
 ```yaml
-mode: madmax               # "madmax" | "rl" | "skills_only"
+mode: auto                 # "auto" | "rl" | "skills_only"
 claw_type: openclaw        # "openclaw" | "copaw" | "ironclaw" | "picoclaw" | "zeroclaw" | "nanoclaw" | "nemoclaw" | "hermes" | "none"
 
 llm:
+  auth_method: api_key      # "api_key" | "oauth_token"
   provider: kimi            # kimi | qwen | openai | minimax | novita | openrouter | volcengine | custom
   model_id: moonshotai/Kimi-K2.5
   api_base: https://api.moonshot.cn/v1
   api_key: sk-...
+  # oauth_token example (token stored via `metaclaw auth paste-token`):
+  # auth_method: oauth_token
+  # provider: anthropic     # anthropic | openai-codex | gemini
+  # model_id: claude-sonnet-4-6
 
 proxy:
   port: 30000
@@ -330,10 +333,10 @@ opd:
 max_context_tokens: 20000   # prompt token cap before truncation; 0 = no truncation (recommended
                             # for skills_only mode with large-context cloud models)
 context_window: 0           # context window advertised to the agent (e.g. OpenClaw compaction
-                            # threshold); 0 = auto (200 000 in skills_only, 32 768 in rl/madmax)
+                            # threshold); 0 = auto (200 000 in skills_only, 32 768 in rl/auto)
 
-scheduler:                  # v0.3: meta-learning scheduler (auto-enabled in madmax mode)
-  enabled: false            # madmax mode enables this automatically; set manually for rl mode
+scheduler:                  # v0.3: meta-learning scheduler (auto-enabled in auto mode)
+  enabled: false            # auto mode enables this automatically; set manually for rl mode
   sleep_start: "23:00"
   sleep_end: "07:00"
   idle_threshold_minutes: 30
@@ -430,13 +433,13 @@ The teacher must be served behind an OpenAI-compatible `/v1/completions` endpoin
 
 ---
 
-## 🧠 MadMax Mode (Default)
+## 🧠 Auto Mode (Default)
 
 **`metaclaw start`**
 
 Everything in RL Mode, plus a meta-learning scheduler that defers weight updates to user-inactive windows so the agent is never interrupted during active use. This is the default mode.
 
-The RL weight hot-swap step pauses the agent for several minutes. Instead of training immediately when a batch is full (like RL Mode does), MadMax waits for an appropriate window.
+The RL weight hot-swap step pauses the agent for several minutes. Instead of training immediately when a batch is full (like RL Mode does), auto mode waits for an appropriate window.
 
 Three conditions trigger an update window (any one is sufficient):
 

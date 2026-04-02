@@ -25,7 +25,7 @@
 
 <br/>
 
-[نظرة عامة](#-نظرة-عامة) • [البدء السريع](#-البدء-السريع) • [الإعدادات](#️-الإعدادات) • [وضع المهارات](#-وضع-المهارات) • [وضع RL](#-وضع-rl) • [وضع MadMax](#-وضع-madmax-الافتراضي) • [الاقتباس](#-الاقتباس)
+[نظرة عامة](#-نظرة-عامة) • [البدء السريع](#-البدء-السريع) • [الإعدادات](#️-الإعدادات) • [وضع المهارات](#-وضع-المهارات) • [وضع RL](#-وضع-rl) • [وضع Auto](#-وضع-auto-الافتراضي) • [الاقتباس](#-الاقتباس)
 
 </div>
 
@@ -38,9 +38,7 @@
 
 ```bash
 metaclaw setup              # معالج الإعداد لمرة واحدة
-metaclaw start              # الوضع الافتراضي: madmax، مهارات + تدريب RL مُجدوَل
-metaclaw start --daemon     # تشغيل في الخلفية، السجلات -> ~/.metaclaw/metaclaw.log
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # مسار سجل مخصص
+metaclaw start              # الوضع الافتراضي: auto، مهارات + تدريب RL مُجدوَل
 metaclaw start --mode rl    # RL بدون مُجدوِل (يتدرّب فورًا عند اكتمال الدُّفعة)
 metaclaw start --mode skills_only  # مهارات فقط، بدون RL (لا حاجة لـ Tinker)
 ```
@@ -88,7 +86,7 @@ https://github.com/user-attachments/assets/d86a41a8-4181-4e3a-af0e-dc453a6b8594
 |------|---------|-------|
 | `skills_only` | | وكيل وسيط لواجهة LLM API الخاصة بك. يحقن المهارات ويُلخّصها تلقائيًا بعد كل جلسة. لا حاجة لـ GPU / Tinker. |
 | `rl` | | المهارات + تدريب RL (GRPO). يتدرّب فورًا عند اكتمال الدُّفعة. OPD اختياري لتقطير المعلّم. |
-| `madmax` | ✅ | المهارات + RL + مُجدوِل ذكي. تحديثات أوزان RL تعمل فقط خلال فترات النوم/الخمول/الاجتماعات. |
+| `auto` | ✅ | المهارات + RL + مُجدوِل ذكي. تحديثات أوزان RL تعمل فقط خلال فترات النوم/الخمول/الاجتماعات. |
 
 ### **ذاكرة طويلة المدى**
 يمكن لـ MetaClaw الاحتفاظ بالحقائق والتفضيلات وسجل المشروع عبر الجلسات وحقن السياق المناسب في كل دور — حتى يتذكر الوكيل ما أخبرته به حتى بعد أسابيع.
@@ -199,31 +197,36 @@ metaclaw start
 
 ```
 metaclaw setup                  # معالج الإعداد التفاعلي لأول مرة
-metaclaw start                  # تشغيل MetaClaw (الوضع الافتراضي: madmax)
-metaclaw start --daemon         # تشغيل MetaClaw في الخلفية
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # مسار سجل مخصص
+metaclaw start                  # تشغيل MetaClaw (الوضع الافتراضي: auto)
 metaclaw start --mode rl        # فرض وضع RL لهذه الجلسة (بدون مُجدوِل)
 metaclaw start --mode skills_only  # فرض وضع المهارات فقط لهذه الجلسة
 metaclaw stop                   # إيقاف مثيل MetaClaw قيد التشغيل
 metaclaw status                 # التحقق من صحة الوكيل الوسيط والوضع الحالي وحالة المُجدوِل
 metaclaw config show            # عرض الإعدادات الحالية
 metaclaw config KEY VALUE       # تعيين قيمة إعداد
+metaclaw auth paste-token --provider anthropic      # تخزين رمز OAuth (anthropic | openai-codex | gemini)
+metaclaw auth status                                # عرض جميع ملفات المصادقة المخزّنة
 ```
 
-عند تشغيل MetaClaw مع `--daemon`، ينتظر الأمر حتى يصبح الوكيل المحلي جاهزًا قبل الإرجاع. استخدم `metaclaw status` للتحقق من الجاهزية و `metaclaw stop` لإيقاف العملية في الخلفية.
+استخدم `metaclaw status` للتحقق من الجاهزية و`metaclaw stop` لإيقاف العملية.
 
 <details>
 <summary><b>المرجع الكامل للإعدادات (انقر للتوسيع)</b></summary>
 
 ```yaml
-mode: madmax               # "madmax" | "rl" | "skills_only"
+mode: auto                 # "auto" | "rl" | "skills_only"
 claw_type: openclaw        # "openclaw" | "copaw" | "ironclaw" | "picoclaw" | "zeroclaw" | "nanoclaw" | "nemoclaw" | "hermes" | "none"
 
 llm:
+  auth_method: api_key      # "api_key" | "oauth_token"
   provider: kimi            # kimi | qwen | openai | minimax | novita | openrouter | volcengine | custom
   model_id: moonshotai/Kimi-K2.5
   api_base: https://api.moonshot.cn/v1
   api_key: sk-...
+  # مثال oauth_token (الرمز مخزَّن عبر `metaclaw auth paste-token`):
+  # auth_method: oauth_token
+  # provider: anthropic     # anthropic | openai-codex | gemini
+  # model_id: claude-sonnet-4-6
 
 proxy:
   port: 30000
@@ -265,10 +268,10 @@ opd:
 max_context_tokens: 20000   # حد رموز الموجه قبل الاقتطاع؛ 0 = بلا اقتطاع
                             # (موصى به في skills_only مع نماذج سحابية ذات سياق كبير)
 context_window: 0           # نافذة السياق المبلَّغ عنها للوكيل (مثل عتبة ضغط OpenClaw)؛
-                            # 0 = تلقائي (≈200000 في skills_only، 32768 في rl/madmax)
+                            # 0 = تلقائي (≈200000 في skills_only، 32768 في rl/auto)
 
-scheduler:                  # v0.3: مُجدوِل التعلّم الفوقي (يُفعَّل تلقائيًا في وضع madmax)
-  enabled: false            # يُفعَّل تلقائيًا في وضع madmax، يجب ضبطه يدويًا في وضع rl
+scheduler:                  # v0.3: مُجدوِل التعلّم الفوقي (يُفعَّل تلقائيًا في وضع auto)
+  enabled: false            # يُفعَّل تلقائيًا في وضع auto، يجب ضبطه يدويًا في وضع rl
   sleep_start: "23:00"
   sleep_end: "07:00"
   idle_threshold_minutes: 30
@@ -365,13 +368,13 @@ metaclaw config opd.kl_penalty_coef 1.0
 
 ---
 
-## 🧠 وضع MadMax (الافتراضي)
+## 🧠 وضع Auto (الافتراضي)
 
 **`metaclaw start`**
 
 كل ما في وضع RL، بالإضافة إلى مُجدوِل تعلّم فوقي يؤجّل تحديثات الأوزان إلى فترات عدم نشاط المستخدم حتى لا يُقاطَع الوكيل أثناء الاستخدام النشط. هذا هو الوضع الافتراضي.
 
-تُوقف خطوة تبديل أوزان RL الوكيل لعدة دقائق. بدلًا من التدريب فورًا عند اكتمال الدُّفعة (كما في وضع RL)، ينتظر MadMax نافذة مناسبة.
+تُوقف خطوة تبديل أوزان RL الوكيل لعدة دقائق. بدلًا من التدريب فورًا عند اكتمال الدُّفعة (كما في وضع RL)، ينتظر وضع auto نافذة مناسبة.
 
 ثلاثة شروط تُفعّل نافذة التحديث (أي شرط منها كافٍ):
 

@@ -25,7 +25,7 @@
 
 <br/>
 
-[Panoramica](#-panoramica) • [Avvio Rapido](#-avvio-rapido) • [Configurazione](#️-configurazione) • [Modalita Skills](#-modalita-skills) • [Modalita RL](#-modalita-rl) • [Modalita MadMax](#-modalita-madmax-predefinita) • [Citazione](#-citazione)
+[Panoramica](#-panoramica) • [Avvio Rapido](#-avvio-rapido) • [Configurazione](#️-configurazione) • [Modalita Skills](#-modalita-skills) • [Modalita RL](#-modalita-rl) • [Modalita Auto](#-modalita-auto-predefinita) • [Citazione](#-citazione)
 
 </div>
 
@@ -38,9 +38,7 @@
 
 ```bash
 metaclaw setup              # configurazione guidata iniziale
-metaclaw start              # predefinito: modalita madmax, Skill + addestramento RL programmato
-metaclaw start --daemon     # esegui in background, log -> ~/.metaclaw/metaclaw.log
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # percorso log personalizzato
+metaclaw start              # predefinito: modalita auto, Skill + addestramento RL programmato
 metaclaw start --mode rl    # RL senza scheduler (addestra immediatamente a batch completo)
 metaclaw start --mode skills_only  # solo Skill, nessun RL (Tinker non necessario)
 ```
@@ -88,7 +86,7 @@ Configura una sola volta con `metaclaw setup`, poi `metaclaw start` avvia il pro
 |----------|-------------|-------------|
 | `skills_only` | | Proxy verso la tua API LLM. Skill iniettate e riassunte automaticamente dopo ogni sessione. Nessuna GPU / Tinker necessaria. |
 | `rl` | | Skill + addestramento RL (GRPO). Addestra immediatamente quando il batch e pieno. OPD opzionale per la distillazione teacher. |
-| `madmax` | ✅ | Skill + RL + scheduler intelligente. Gli aggiornamenti dei pesi RL vengono eseguiti solo durante le finestre di sonno/inattivita/riunioni. |
+| `auto` | ✅ | Skill + RL + scheduler intelligente. Gli aggiornamenti dei pesi RL vengono eseguiti solo durante le finestre di sonno/inattivita/riunioni. |
 
 ### **Memoria a lungo termine**
 MetaClaw può conservare fatti, preferenze e cronologia del progetto tra le sessioni e iniettare contesto pertinente a ogni turno — così il tuo agente ricorda ciò che gli hai detto, anche settimane dopo.
@@ -199,31 +197,36 @@ La configurazione si trova in `~/.metaclaw/config.yaml`, creata da `metaclaw set
 
 ```
 metaclaw setup                  # Procedura guidata di configurazione iniziale
-metaclaw start                  # Avvia MetaClaw (predefinito: modalita madmax)
-metaclaw start --daemon         # Avvia MetaClaw in background
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # Percorso log personalizzato
+metaclaw start                  # Avvia MetaClaw (predefinito: modalita auto)
 metaclaw start --mode rl        # Forza la modalita RL (senza scheduler) per questa sessione
 metaclaw start --mode skills_only  # Forza la modalita solo Skill per questa sessione
 metaclaw stop                   # Ferma un'istanza MetaClaw in esecuzione
 metaclaw status                 # Controlla lo stato del proxy, la modalita e lo scheduler
 metaclaw config show            # Visualizza la configurazione corrente
 metaclaw config KEY VALUE       # Imposta un valore di configurazione
+metaclaw auth paste-token --provider anthropic      # Memorizza token OAuth (anthropic | openai-codex | gemini)
+metaclaw auth status                                # Mostra tutti i profili di autenticazione memorizzati
 ```
 
-Quando avvii MetaClaw con `--daemon`, il comando attende che il proxy locale sia operativo prima di restituire il controllo. Usa `metaclaw status` per verificare lo stato e `metaclaw stop` per arrestare il processo in background.
+Usa `metaclaw status` per verificare la disponibilita e `metaclaw stop` per arrestare il processo.
 
 <details>
 <summary><b>Riferimento completo della configurazione (clicca per espandere)</b></summary>
 
 ```yaml
-mode: madmax               # "madmax" | "rl" | "skills_only"
+mode: auto                 # "auto" | "rl" | "skills_only"
 claw_type: openclaw        # "openclaw" | "copaw" | "ironclaw" | "picoclaw" | "zeroclaw" | "nanoclaw" | "nemoclaw" | "hermes" | "none"
 
 llm:
+  auth_method: api_key      # "api_key" | "oauth_token"
   provider: kimi            # kimi | qwen | openai | minimax | novita | openrouter | volcengine | custom
   model_id: moonshotai/Kimi-K2.5
   api_base: https://api.moonshot.cn/v1
   api_key: sk-...
+  # esempio oauth_token (token memorizzato con `metaclaw auth paste-token`):
+  # auth_method: oauth_token
+  # provider: anthropic     # anthropic | openai-codex | gemini
+  # model_id: claude-sonnet-4-6
 
 proxy:
   port: 30000
@@ -265,10 +268,10 @@ opd:
 max_context_tokens: 20000   # limite token del prompt prima del troncamento; 0 = nessun troncamento
                             # (consigliato in skills_only con modelli cloud a grande contesto)
 context_window: 0           # finestra di contesto comunicata all'agente (es. soglia di compattazione OpenClaw);
-                            # 0 = auto (≈200 000 in skills_only, 32 768 in rl/madmax)
+                            # 0 = auto (≈200 000 in skills_only, 32 768 in rl/auto)
 
-scheduler:                  # v0.3: scheduler di meta-apprendimento (abilitato automaticamente in modalita madmax)
-  enabled: false            # la modalita madmax lo abilita automaticamente; impostare manualmente per la modalita rl
+scheduler:                  # v0.3: scheduler di meta-apprendimento (abilitato automaticamente in modalita auto)
+  enabled: false            # la modalita auto lo abilita automaticamente; impostare manualmente per la modalita rl
   sleep_start: "23:00"
   sleep_end: "07:00"
   idle_threshold_minutes: 30
@@ -365,13 +368,13 @@ Il teacher deve essere servito dietro un endpoint `/v1/completions` compatibile 
 
 ---
 
-## 🧠 Modalita MadMax (Predefinita)
+## 🧠 Modalita Auto (Predefinita)
 
 **`metaclaw start`**
 
 Tutto cio che offre la Modalita RL, piu uno scheduler di meta-apprendimento che posticipa gli aggiornamenti dei pesi alle finestre di inattivita dell'utente, in modo che l'agente non venga mai interrotto durante l'uso attivo. Questa e la modalita predefinita.
 
-Il passaggio di sostituzione a caldo dei pesi RL mette in pausa l'agente per diversi minuti. Invece di addestrare immediatamente quando il batch e pieno (come nella Modalita RL), MadMax attende una finestra appropriata.
+Il passaggio di sostituzione a caldo dei pesi RL mette in pausa l'agente per diversi minuti. Invece di addestrare immediatamente quando il batch e pieno (come nella Modalita RL), la modalita auto attende una finestra appropriata.
 
 Tre condizioni attivano una finestra di aggiornamento (una qualsiasi e sufficiente):
 

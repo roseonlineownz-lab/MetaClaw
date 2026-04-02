@@ -25,7 +25,7 @@
 
 <br/>
 
-[Übersicht](#-übersicht) • [Schnellstart](#-schnellstart) • [Konfiguration](#️-konfiguration) • [Skills-Modus](#-skills-modus) • [RL-Modus](#-rl-modus) • [MadMax-Modus](#-madmax-modus-standard) • [Zitierung](#-zitierung)
+[Übersicht](#-übersicht) • [Schnellstart](#-schnellstart) • [Konfiguration](#️-konfiguration) • [Skills-Modus](#-skills-modus) • [RL-Modus](#-rl-modus) • [Auto-Modus](#-auto-modus-standard) • [Zitierung](#-zitierung)
 
 </div>
 
@@ -38,9 +38,7 @@
 
 ```bash
 metaclaw setup              # Einmaliger Konfigurationsassistent
-metaclaw start              # Standard: MadMax-Modus, Skills + geplantes RL-Training
-metaclaw start --daemon     # im Hintergrund starten, Logs -> ~/.metaclaw/metaclaw.log
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # benutzerdefinierter Log-Pfad
+metaclaw start              # Standard: Auto-Modus, Skills + geplantes RL-Training
 metaclaw start --mode rl    # RL ohne Scheduler (trainiert sofort bei vollem Batch)
 metaclaw start --mode skills_only  # Nur Skills, kein RL (kein Tinker nötig)
 ```
@@ -88,7 +86,7 @@ Einmal mit `metaclaw setup` konfigurieren, dann startet `metaclaw start` den Pro
 |-------|---------|----------|
 | `skills_only` | | Proxy für deine LLM-API. Skills werden injiziert und nach jeder Session automatisch zusammengefasst. Kein GPU/Tinker erforderlich. |
 | `rl` | | Skills + RL-Training (GRPO). Trainiert sofort, wenn ein Batch voll ist. Optional OPD für Lehrer-Destillation. |
-| `madmax` | ✅ | Skills + RL + Smart-Scheduler. RL-Gewichtsupdates laufen nur in Schlaf-/Leerlauf-/Meeting-Fenstern. |
+| `auto` | ✅ | Skills + RL + Smart-Scheduler. RL-Gewichtsupdates laufen nur in Schlaf-/Leerlauf-/Meeting-Fenstern. |
 
 ### **Langzeitgedächtnis**
 MetaClaw kann Fakten, Präferenzen und Projektverlauf über Sitzungen hinweg speichern und pro Runde relevanten Kontext einspielen — dein Agent erinnert sich an das, was du gesagt hast, auch Wochen später.
@@ -199,31 +197,36 @@ Die Konfiguration liegt in `~/.metaclaw/config.yaml`, erstellt durch `metaclaw s
 
 ```
 metaclaw setup                  # Interaktiver Erstkonfigurations-Assistent
-metaclaw start                  # MetaClaw starten (Standard: MadMax-Modus)
-metaclaw start --daemon         # MetaClaw im Hintergrund starten
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # Benutzerdefinierter Log-Pfad
+metaclaw start                  # MetaClaw starten (Standard: Auto-Modus)
 metaclaw start --mode rl        # RL-Modus für diese Session erzwingen (ohne Scheduler)
 metaclaw start --mode skills_only  # Nur-Skills-Modus für diese Session erzwingen
 metaclaw stop                   # Laufende MetaClaw-Instanz stoppen
 metaclaw status                 # Proxy-Status, laufenden Modus und Scheduler prüfen
 metaclaw config show            # Aktuelle Konfiguration anzeigen
 metaclaw config KEY VALUE       # Konfigurationswert setzen
+metaclaw auth paste-token --provider anthropic      # OAuth-Token speichern (anthropic | openai-codex | gemini)
+metaclaw auth status                                # Alle gespeicherten Authentifizierungsprofile anzeigen
 ```
 
-Wenn Sie MetaClaw mit `--daemon` starten, wartet der Befehl, bis der lokale Proxy bereit ist, bevor er zurückkehrt. Verwenden Sie `metaclaw status` zur Überprüfung und `metaclaw stop` zum Stoppen des Hintergrundprozesses.
+Verwenden Sie `metaclaw status` zur Überprüfung der Bereitschaft und `metaclaw stop` zum Stoppen des Prozesses.
 
 <details>
 <summary><b>Vollständige Konfigurationsreferenz (zum Aufklappen klicken)</b></summary>
 
 ```yaml
-mode: madmax               # "madmax" | "rl" | "skills_only"
+mode: auto                 # "auto" | "rl" | "skills_only"
 claw_type: openclaw        # "openclaw" | "copaw" | "ironclaw" | "picoclaw" | "zeroclaw" | "nanoclaw" | "nemoclaw" | "hermes" | "none"
 
 llm:
+  auth_method: api_key      # "api_key" | "oauth_token"
   provider: kimi            # kimi | qwen | openai | minimax | novita | openrouter | volcengine | custom
   model_id: moonshotai/Kimi-K2.5
   api_base: https://api.moonshot.cn/v1
   api_key: sk-...
+  # oauth_token-Beispiel (Token gespeichert via `metaclaw auth paste-token`):
+  # auth_method: oauth_token
+  # provider: anthropic     # anthropic | openai-codex | gemini
+  # model_id: claude-sonnet-4-6
 
 proxy:
   port: 30000
@@ -265,10 +268,10 @@ opd:
 max_context_tokens: 20000   # Obergrenze für Prompt-Tokens vor Trunkierung; 0 = keine Trunkierung
                             # (empfohlen in skills_only mit großen Cloud-Modellen)
 context_window: 0           # dem Agenten gemeldetes Kontextfenster (z. B. OpenClaw-Kompaktierungsschwelle);
-                            # 0 = auto (ca. 200 000 in skills_only, 32 768 in rl/madmax)
+                            # 0 = auto (ca. 200 000 in skills_only, 32 768 in rl/auto)
 
-scheduler:                  # v0.3: Meta-Learning-Scheduler (auto-aktiviert im MadMax-Modus)
-  enabled: false            # MadMax-Modus aktiviert automatisch; für RL-Modus manuell setzen
+scheduler:                  # v0.3: Meta-Learning-Scheduler (auto-aktiviert im Auto-Modus)
+  enabled: false            # Auto-Modus aktiviert automatisch; für RL-Modus manuell setzen
   sleep_start: "23:00"
   sleep_end: "07:00"
   idle_threshold_minutes: 30
@@ -365,13 +368,13 @@ Das Lehrermodell muss hinter einem OpenAI-kompatiblen `/v1/completions`-Endpunkt
 
 ---
 
-## 🧠 MadMax-Modus (Standard)
+## 🧠 Auto-Modus (Standard)
 
 **`metaclaw start`**
 
 Alles aus dem RL-Modus, plus ein Meta-Learning-Scheduler, der Gewichtsupdates in Benutzer-Inaktivitätsfenster verschiebt, damit der Agent während der aktiven Nutzung nie unterbrochen wird. Dies ist der Standardmodus.
 
-Der RL-Gewichts-Hot-Swap-Schritt pausiert den Agenten für mehrere Minuten. Anstatt sofort zu trainieren, wenn ein Batch voll ist (wie im RL-Modus), wartet MadMax auf ein geeignetes Zeitfenster.
+Der RL-Gewichts-Hot-Swap-Schritt pausiert den Agenten für mehrere Minuten. Anstatt sofort zu trainieren, wenn ein Batch voll ist (wie im RL-Modus), wartet der Auto-Modus auf ein geeignetes Zeitfenster.
 
 Drei Bedingungen lösen ein Update-Fenster aus (eine reicht aus):
 

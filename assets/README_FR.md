@@ -25,7 +25,7 @@
 
 <br/>
 
-[Apercu](#-aperçu) • [Demarrage rapide](#-démarrage-rapide) • [Configuration](#️-configuration) • [Mode Skills](#-mode-skills) • [Mode RL](#-mode-rl) • [Mode MadMax](#-mode-madmax-par-défaut) • [Citation](#-citation)
+[Apercu](#-aperçu) • [Demarrage rapide](#-démarrage-rapide) • [Configuration](#️-configuration) • [Mode Skills](#-mode-skills) • [Mode RL](#-mode-rl) • [Mode Auto](#-mode-auto-par-défaut) • [Citation](#-citation)
 
 </div>
 
@@ -38,9 +38,7 @@
 
 ```bash
 metaclaw setup              # assistant de configuration unique
-metaclaw start              # par defaut : mode madmax, skills + entrainement RL planifie
-metaclaw start --daemon     # executer en arriere-plan, logs -> ~/.metaclaw/metaclaw.log
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # chemin de log personnalise
+metaclaw start              # par defaut : mode auto, skills + entrainement RL planifie
 metaclaw start --mode rl    # RL sans planificateur (entraine des qu'un batch est plein)
 metaclaw start --mode skills_only  # skills uniquement, pas de RL (Tinker non requis)
 ```
@@ -88,7 +86,7 @@ Configurez une fois avec `metaclaw setup`, puis `metaclaw start` lance le proxy,
 |------|-----------|----------------|
 | `skills_only` | | Proxy vers votre API LLM. Skills injectes, resumes automatiquement apres chaque session. Pas de GPU/Tinker requis. |
 | `rl` | | Skills + entrainement RL (GRPO). Entraine immediatement quand un batch est plein. OPD optionnel pour la distillation enseignant. |
-| `madmax` | ✅ | Skills + RL + planificateur intelligent. Mises a jour RL uniquement pendant les fenetres de sommeil/inactivite/reunion. |
+| `auto` | ✅ | Skills + RL + planificateur intelligent. Mises a jour RL uniquement pendant les fenetres de sommeil/inactivite/reunion. |
 
 ### **Mémoire à long terme**
 MetaClaw peut conserver faits, préférences et historique de projet entre les sessions et injecter le contexte pertinent à chaque tour — votre agent se souvient de ce que vous lui avez dit, même des semaines plus tard.
@@ -199,30 +197,35 @@ La configuration se trouve dans `~/.metaclaw/config.yaml`, creee par `metaclaw s
 
 ```
 metaclaw setup                  # Assistant de configuration interactif initial
-metaclaw start                  # Demarrer MetaClaw (par defaut : mode madmax)
-metaclaw start --daemon         # Demarrer MetaClaw en arriere-plan
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # Chemin de log personnalise
+metaclaw start                  # Demarrer MetaClaw (par defaut : mode auto)
 metaclaw start --mode rl        # Forcer le mode RL pour cette session (sans planificateur)
 metaclaw start --mode skills_only  # Forcer le mode skills uniquement pour cette session
 metaclaw stop                   # Arreter une instance MetaClaw en cours
 metaclaw status                 # Verifier l'etat du proxy, le mode en cours et le planificateur
 metaclaw config show            # Afficher la configuration actuelle
 metaclaw config KEY VALUE       # Definir une valeur de configuration
+metaclaw auth paste-token --provider anthropic      # Stocker un token OAuth (anthropic | openai-codex | gemini)
+metaclaw auth status                                # Afficher tous les profils d'authentification enregistres
 ```
 
-Lorsque vous demarrez MetaClaw avec `--daemon`, la commande attend que le proxy local soit operationnel avant de retourner. Utilisez `metaclaw status` pour verifier l'etat et `metaclaw stop` pour arreter le processus en arriere-plan.
+Utilisez `metaclaw status` pour verifier la disponibilite et `metaclaw stop` pour arreter le processus.
 
 <details>
 <summary><b>Reference de configuration complete (cliquez pour developper)</b></summary>
 
 ```yaml
-mode: madmax               # "madmax" | "rl" | "skills_only"
+mode: auto                 # "auto" | "rl" | "skills_only"
 
 llm:
+  auth_method: api_key      # "api_key" | "oauth_token"
   provider: kimi            # kimi | qwen | openai | minimax | novita | openrouter | volcengine | custom
   model_id: moonshotai/Kimi-K2.5
   api_base: https://api.moonshot.cn/v1
   api_key: sk-...
+  # exemple oauth_token (token stocke via `metaclaw auth paste-token`) :
+  # auth_method: oauth_token
+  # provider: anthropic     # anthropic | openai-codex | gemini
+  # model_id: claude-sonnet-4-6
 
 proxy:
   port: 30000
@@ -264,10 +267,10 @@ opd:
 max_context_tokens: 20000   # plafond de tokens de prompt avant troncature ; 0 = pas de troncature
                             # (recommande en skills_only avec grands modeles cloud)
 context_window: 0           # fenetre de contexte annoncee a l'agent (p. ex. seuil de compaction OpenClaw) ;
-                            # 0 = auto (environ 200 000 en skills_only, 32 768 en rl/madmax)
+                            # 0 = auto (environ 200 000 en skills_only, 32 768 en rl/auto)
 
-scheduler:                  # v0.3 : planificateur de meta-apprentissage (auto-active en mode madmax)
-  enabled: false            # le mode madmax l'active automatiquement ; a definir manuellement pour rl
+scheduler:                  # v0.3 : planificateur de meta-apprentissage (auto-active en mode auto)
+  enabled: false            # le mode auto l'active automatiquement ; a definir manuellement pour rl
   sleep_start: "23:00"
   sleep_end: "07:00"
   idle_threshold_minutes: 30
@@ -364,13 +367,13 @@ L'enseignant doit etre servi derriere un endpoint `/v1/completions` compatible O
 
 ---
 
-## 🧠 Mode MadMax (par defaut)
+## 🧠 Mode Auto (par defaut)
 
 **`metaclaw start`**
 
 Tout ce que le Mode RL offre, plus un planificateur de meta-apprentissage qui reporte les mises a jour des poids aux fenetres d'inactivite de l'utilisateur pour eviter toute interruption pendant l'utilisation active. C'est le mode par defaut.
 
-L'etape de hot-swap des poids RL met l'agent en pause pendant plusieurs minutes. Au lieu d'entrainer immediatement quand un batch est plein (comme le fait le Mode RL), MadMax attend une fenetre appropriee.
+L'etape de hot-swap des poids RL met l'agent en pause pendant plusieurs minutes. Au lieu d'entrainer immediatement quand un batch est plein (comme le fait le Mode RL), le mode auto attend une fenetre appropriee.
 
 Trois conditions declenchent une fenetre de mise a jour (une seule suffit) :
 

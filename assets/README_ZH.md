@@ -25,7 +25,7 @@
 
 <br/>
 
-[概述](#-概述) • [快速开始](#-快速开始) • [配置说明](#️-配置说明) • [Skills 模式](#-skills-模式) • [RL 模式](#-rl-模式) • [MadMax 模式](#-madmax-模式默认) • [引用](#-引用)
+[概述](#-概述) • [快速开始](#-快速开始) • [配置说明](#️-配置说明) • [Skills 模式](#-skills-模式) • [RL 模式](#-rl-模式) • [Auto 模式](#-auto-模式默认) • [引用](#-引用)
 
 </div>
 
@@ -38,9 +38,7 @@
 
 ```bash
 metaclaw setup              # 首次配置向导
-metaclaw start              # 默认 madmax 模式：Skills + 定时 RL 训练
-metaclaw start --daemon     # 后台运行，日志 -> ~/.metaclaw/metaclaw.log
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # 自定义日志路径
+metaclaw start              # 默认 auto 模式：Skills + 定时 RL 训练
 metaclaw start --mode rl    # 无调度器 RL（batch 满即训练）
 metaclaw start --mode skills_only  # 仅 Skills，无 RL（无需 Tinker）
 ```
@@ -88,7 +86,7 @@ https://github.com/user-attachments/assets/d86a41a8-4181-4e3a-af0e-dc453a6b8594
 |------|------|----------|
 | `skills_only` | | 代理你的 LLM API。注入 Skill,会话结束后自动总结。无需 GPU / Tinker。 |
 | `rl` | | Skills + RL 训练（GRPO）。batch 满后立即训练。可选 OPD 进行教师蒸馏。 |
-| `madmax` | ✅ | Skills + RL + 智能调度器。RL 权重更新只在睡眠/空闲/会议窗口进行。 |
+| `auto` | ✅ | Skills + RL + 智能调度器。RL 权重更新只在睡眠/空闲/会议窗口进行。 |
 
 ### **长期记忆**
 MetaClaw 可跨会话持久保存事实、偏好与项目历史，并在每轮对话中检索相关上下文注入提示——让你的 Agent 记得你说过的话，即使相隔数周。
@@ -199,31 +197,36 @@ metaclaw start
 
 ```
 metaclaw setup                  # 首次交互式配置向导
-metaclaw start                  # 启动 MetaClaw（默认 madmax 模式）
-metaclaw start --daemon         # 在后台启动 MetaClaw
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # 自定义日志路径
+metaclaw start                  # 启动 MetaClaw（默认 auto 模式）
 metaclaw start --mode rl        # 本次会话强制启用 RL 模式（无调度器）
 metaclaw start --mode skills_only  # 本次会话强制仅 Skills 模式
 metaclaw stop                   # 停止正在运行的 MetaClaw 实例
 metaclaw status                 # 查看代理健康状态、运行模式与调度器状态
 metaclaw config show            # 查看当前配置
 metaclaw config KEY VALUE       # 设置配置项
+metaclaw auth paste-token --provider anthropic      # 存储 OAuth token（anthropic | openai-codex | gemini）
+metaclaw auth status                                # 显示所有已存储的认证配置
 ```
 
-使用 `--daemon` 启动 MetaClaw 时，命令会等待本地代理就绪后才返回。使用 `metaclaw status` 检查状态，使用 `metaclaw stop` 停止后台进程。
+使用 `metaclaw status` 验证就绪状态，使用 `metaclaw stop` 停止进程。
 
 <details>
 <summary><b>完整配置参考（点击展开）</b></summary>
 
 ```yaml
-mode: madmax               # "madmax" | "rl" | "skills_only"
+mode: auto                 # "auto" | "rl" | "skills_only"
 claw_type: openclaw        # "openclaw" | "copaw" | "ironclaw" | "picoclaw" | "zeroclaw" | "nanoclaw" | "nemoclaw" | "hermes" | "none"
 
 llm:
+  auth_method: api_key      # "api_key" | "oauth_token"
   provider: kimi            # kimi | qwen | openai | minimax | novita | openrouter | volcengine | custom
   model_id: moonshotai/Kimi-K2.5
   api_base: https://api.moonshot.cn/v1
   api_key: sk-...
+  # oauth_token 示例（token 通过 `metaclaw auth paste-token` 存储）：
+  # auth_method: oauth_token
+  # provider: anthropic     # anthropic | openai-codex | gemini
+  # model_id: claude-sonnet-4-6
 
 proxy:
   port: 30000
@@ -265,10 +268,10 @@ opd:
 max_context_tokens: 20000   # 截断前 prompt token 上限；0 表示不截断（大上下文云端模型在 skills_only 下推荐）
                             #
 context_window: 0           # 向 Agent 声明的上下文窗口（如 OpenClaw 压缩阈值）；0 为自动
-                            # （skills_only 约 200000，rl/madmax 约 32768）
+                            # （skills_only 约 200000，rl/auto 约 32768）
 
-scheduler:                  # v0.3：元学习调度器（madmax 模式下自动启用）
-  enabled: false            # madmax 模式自动启用；rl 模式需手动设置
+scheduler:                  # v0.3：元学习调度器（auto 模式下自动启用）
+  enabled: false            # auto 模式自动启用；rl 模式需手动设置
   sleep_start: "23:00"
   sleep_end: "07:00"
   idle_threshold_minutes: 30
@@ -365,13 +368,13 @@ metaclaw config opd.kl_penalty_coef 1.0
 
 ---
 
-## 🧠 MadMax 模式（默认）
+## 🧠 Auto 模式（默认）
 
 **`metaclaw start`**
 
 在 RL 模式基础上,增加元学习调度器,将权重更新推迟到用户不活跃的窗口,确保活跃使用期间不受干扰。这是默认模式。
 
-RL 权重热更新会暂停 Agent 数分钟。MadMax 不像 RL 模式那样 batch 满后立即训练,而是等待合适的窗口。
+RL 权重热更新会暂停 Agent 数分钟。auto 模式不像 RL 模式那样 batch 满后立即训练,而是等待合适的窗口。
 
 三种条件触发更新窗口（满足任一即可）：
 

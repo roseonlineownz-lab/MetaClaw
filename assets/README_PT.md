@@ -25,7 +25,7 @@
 
 <br/>
 
-[Visao Geral](#-visao-geral) • [Inicio Rapido](#-inicio-rapido) • [Configuracao](#️-configuracao) • [Modo Skills](#-modo-skills) • [Modo RL](#-modo-rl) • [Modo MadMax](#-modo-madmax-padrao) • [Citacao](#-citacao)
+[Visao Geral](#-visao-geral) • [Inicio Rapido](#-inicio-rapido) • [Configuracao](#️-configuracao) • [Modo Skills](#-modo-skills) • [Modo RL](#-modo-rl) • [Modo Auto](#-modo-auto-padrao) • [Citacao](#-citacao)
 
 </div>
 
@@ -38,9 +38,7 @@
 
 ```bash
 metaclaw setup              # assistente de configuracao inicial
-metaclaw start              # padrao: modo madmax, Skills + treinamento RL agendado
-metaclaw start --daemon     # executar em segundo plano, logs -> ~/.metaclaw/metaclaw.log
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # caminho de log personalizado
+metaclaw start              # padrao: modo auto, Skills + treinamento RL agendado
 metaclaw start --mode rl    # RL sem agendador (treina imediatamente com batch completo)
 metaclaw start --mode skills_only  # apenas Skills, sem RL (sem necessidade de Tinker)
 ```
@@ -88,7 +86,7 @@ Configure uma vez com `metaclaw setup`, depois `metaclaw start` inicia o proxy, 
 |------|--------|-----------|
 | `skills_only` | | Proxy para sua API LLM. Skills injetadas, resumidas automaticamente apos cada sessao. Sem necessidade de GPU/Tinker. |
 | `rl` | | Skills + treinamento RL (GRPO). Treina imediatamente quando o batch esta completo. OPD opcional para destilacao do professor. |
-| `madmax` | ✅ | Skills + RL + agendador inteligente. Atualizacoes de pesos RL ocorrem apenas durante janelas de sono/ociosidade/reuniao. |
+| `auto` | ✅ | Skills + RL + agendador inteligente. Atualizacoes de pesos RL ocorrem apenas durante janelas de sono/ociosidade/reuniao. |
 
 ### **Memória de longo prazo**
 O MetaClaw pode manter fatos, preferências e histórico do projeto entre sessões e injetar contexto relevante a cada turno — para que seu agente lembre do que você disse, mesmo semanas depois.
@@ -199,31 +197,36 @@ O arquivo de configuracao fica em `~/.metaclaw/config.yaml`, criado por `metacla
 
 ```
 metaclaw setup                  # Assistente interativo de configuracao inicial
-metaclaw start                  # Iniciar MetaClaw (padrao: modo madmax)
-metaclaw start --daemon         # Iniciar MetaClaw em segundo plano
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # Caminho de log personalizado
+metaclaw start                  # Iniciar MetaClaw (padrao: modo auto)
 metaclaw start --mode rl        # Forcar modo RL (sem agendador) nesta sessao
 metaclaw start --mode skills_only  # Forcar modo apenas Skills nesta sessao
 metaclaw stop                   # Parar uma instancia MetaClaw em execucao
 metaclaw status                 # Verificar saude do proxy, modo de execucao e estado do agendador
 metaclaw config show            # Visualizar configuracao atual
 metaclaw config KEY VALUE       # Definir um valor de configuracao
+metaclaw auth paste-token --provider anthropic      # Armazenar token OAuth (anthropic | openai-codex | gemini)
+metaclaw auth status                                # Exibir todos os perfis de autenticacao armazenados
 ```
 
-Ao iniciar MetaClaw com `--daemon`, o comando aguarda ate que o proxy local esteja operacional antes de retornar. Use `metaclaw status` para verificar o estado e `metaclaw stop` para parar o processo em segundo plano.
+Use `metaclaw status` para verificar a disponibilidade e `metaclaw stop` para parar o processo.
 
 <details>
 <summary><b>Referencia completa de configuracao (clique para expandir)</b></summary>
 
 ```yaml
-mode: madmax               # "madmax" | "rl" | "skills_only"
+mode: auto                 # "auto" | "rl" | "skills_only"
 claw_type: openclaw        # "openclaw" | "copaw" | "ironclaw" | "picoclaw" | "zeroclaw" | "nanoclaw" | "nemoclaw" | "hermes" | "none"
 
 llm:
+  auth_method: api_key      # "api_key" | "oauth_token"
   provider: kimi            # kimi | qwen | openai | minimax | novita | openrouter | volcengine | custom
   model_id: moonshotai/Kimi-K2.5
   api_base: https://api.moonshot.cn/v1
   api_key: sk-...
+  # exemplo oauth_token (token armazenado via `metaclaw auth paste-token`):
+  # auth_method: oauth_token
+  # provider: anthropic     # anthropic | openai-codex | gemini
+  # model_id: claude-sonnet-4-6
 
 proxy:
   port: 30000
@@ -265,10 +268,10 @@ opd:
 max_context_tokens: 20000   # limite de tokens do prompt antes do truncamento; 0 = sem truncar
                             # (recomendado em skills_only com modelos cloud de grande contexto)
 context_window: 0           # janela de contexto informada ao agente (ex.: limiar de compactação do OpenClaw);
-                            # 0 = auto (≈200 000 em skills_only, 32 768 em rl/madmax)
+                            # 0 = auto (≈200 000 em skills_only, 32 768 em rl/auto)
 
-scheduler:                  # v0.3: agendador de meta-aprendizado (habilitado automaticamente no modo madmax)
-  enabled: false            # modo madmax habilita automaticamente; defina manualmente para modo rl
+scheduler:                  # v0.3: agendador de meta-aprendizado (habilitado automaticamente no modo auto)
+  enabled: false            # modo auto habilita automaticamente; defina manualmente para modo rl
   sleep_start: "23:00"
   sleep_end: "07:00"
   idle_threshold_minutes: 30
@@ -365,13 +368,13 @@ O professor deve estar servido atras de um endpoint `/v1/completions` compativel
 
 ---
 
-## 🧠 Modo MadMax (Padrao)
+## 🧠 Modo Auto (Padrao)
 
 **`metaclaw start`**
 
 Tudo do Modo RL, mais um agendador de meta-aprendizado que adia atualizacoes de pesos para janelas de inatividade do usuario, garantindo que o agente nunca seja interrompido durante o uso ativo. Este e o modo padrao.
 
-A etapa de troca a quente de pesos RL pausa o agente por varios minutos. Em vez de treinar imediatamente quando o batch esta completo (como o Modo RL faz), o MadMax aguarda uma janela apropriada.
+A etapa de troca a quente de pesos RL pausa o agente por varios minutos. Em vez de treinar imediatamente quando o batch esta completo (como o Modo RL faz), o modo auto aguarda uma janela apropriada.
 
 Tres condicoes acionam uma janela de atualizacao (qualquer uma e suficiente):
 

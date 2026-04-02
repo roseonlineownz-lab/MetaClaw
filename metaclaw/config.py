@@ -148,8 +148,12 @@ class MetaClawConfig:
     scheduler_calendar_token_path: str = ""  # default set in config_store
 
     # ------------------------------------------------------------------ #
-    # LLM for skills_only forwarding (OpenAI-compatible)                 #
+    # LLM for skills_only forwarding                                     #
     # ------------------------------------------------------------------ #
+    # provider: "custom" (OpenAI-compat API) | "anthropic" | "openai-codex" | "gemini"
+    llm_provider: str = "custom"
+    # auth_method: "api_key" (direct API call) | "oauth_token" (CLI subprocess)
+    llm_auth_method: str = "api_key"
     llm_api_base: str = ""      # e.g. https://api.moonshot.cn/v1
     llm_api_key: str = ""       # bearer token for upstream LLM
     llm_model_id: str = ""      # model name to forward to

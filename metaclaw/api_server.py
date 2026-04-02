@@ -1235,7 +1235,7 @@ class MetaClawAPIServer:
         forward_body["messages"] = _ensure_reasoning_content(messages)
 
         if self.config.mode == "skills_only":
-            output = await self._forward_to_llm(forward_body)
+            output = await self._forward_to_llm(forward_body, session_id=session_id)
         else:
             output = await self._forward_to_tinker(forward_body)
 
@@ -1556,7 +1556,446 @@ class MetaClawAPIServer:
     # LLM forwarding (skills_only mode)                                   #
     # ------------------------------------------------------------------ #
 
-    async def _forward_to_llm(self, body: dict[str, Any]) -> dict[str, Any]:
+    async def _forward_to_llm(
+        self, body: dict[str, Any], session_id: str = "",
+    ) -> dict[str, Any]:
+        """Forward to a real LLM API (skills_only mode).
+
+        Dispatches based on provider and auth_method:
+        - oauth_token providers (anthropic, openai-codex, gemini) → CLI subprocess
+        - api_key providers → OpenAI-compatible API
+        """
+        provider = self.config.llm_provider or "custom"
+        auth_method = self.config.llm_auth_method or "api_key"
+
+        # CLI-backed providers (OAuth token → CLI subprocess)
+        if auth_method == "oauth_token" or provider in self._CLI_PROVIDER_CONFIGS:
+            if provider in self._CLI_PROVIDER_CONFIGS:
+                return await self._forward_to_cli(
+                    body, session_id=session_id, provider=provider,
+                )
+
+        # Direct API call (OpenAI-compatible)
+        return await self._forward_to_openai_compat(body)
+
+    # ── Per-provider CLI config ──────────────────────────────────
+    # Each entry describes how to spawn the CLI for that provider.
+    _CLI_PROVIDER_CONFIGS: dict[str, dict[str, Any]] = {
+        "anthropic": {
+            "binary": "claude",
+            "install_hint": "npm install -g @anthropic-ai/claude-code",
+            "base_args": [
+                "-p",
+                "--output-format", "stream-json",
+                "--verbose",
+                "--permission-mode", "bypassPermissions",
+            ],
+            "model_arg": "--model",
+            "session_arg": "--session-id",
+            "resume_args": ["--resume", "{sessionId}"],
+            "system_prompt_arg": "--append-system-prompt",
+            "oauth_env_var": "CLAUDE_CODE_OAUTH_TOKEN",
+            "api_key_env_var": "ANTHROPIC_API_KEY",
+            "clear_env": ["ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY_OLD"],
+            "default_model": "claude-sonnet-4-6",
+            "model_aliases": {
+                "claude-sonnet-4-6": "sonnet",
+                "claude-sonnet-4-5": "sonnet",
+                "claude-sonnet-4-1": "sonnet",
+                "claude-sonnet-4-0": "sonnet",
+                "claude-opus-4-6": "opus",
+                "claude-opus-4-5": "opus",
+                "claude-haiku-3-5": "haiku",
+            },
+            "output_format": "jsonl",
+        },
+        "openai-codex": {
+            "binary": "codex",
+            "install_hint": "npm install -g @openai/codex",
+            "base_args": [
+                "-q",  # quiet/non-interactive
+                "--full-auto",
+            ],
+            "model_arg": "--model",
+            "session_arg": None,          # codex doesn't have session management
+            "resume_args": None,
+            "system_prompt_arg": None,    # codex uses --instructions file
+            "oauth_env_var": "CODEX_OAUTH_TOKEN",
+            "api_key_env_var": "OPENAI_API_KEY",
+            "clear_env": ["OPENAI_API_KEY"],
+            "default_model": "codex-mini",
+            "model_aliases": {},
+            "output_format": "text",      # codex outputs plain text
+        },
+        "gemini": {
+            "binary": "gemini",
+            "install_hint": "npm install -g @anthropic-ai/gemini-cli",
+            "base_args": [],
+            "model_arg": "--model",
+            "session_arg": None,
+            "resume_args": None,
+            "system_prompt_arg": None,
+            "oauth_env_var": "GEMINI_OAUTH_TOKEN",
+            "api_key_env_var": "GEMINI_API_KEY",
+            "clear_env": ["GEMINI_API_KEY"],
+            "default_model": "gemini-2.5-pro",
+            "model_aliases": {},
+            "output_format": "text",
+        },
+    }
+
+    async def _forward_to_cli(
+        self, body: dict[str, Any], session_id: str = "",
+        provider: str = "anthropic",
+    ) -> dict[str, Any]:
+        """Forward to an LLM via CLI subprocess.
+
+        Generic CLI forwarder supporting multiple providers (Claude Code,
+        OpenAI Codex, Gemini CLI). Each provider is configured via
+        _CLI_PROVIDER_CONFIGS.
+        """
+        import asyncio
+        import json as _json
+        import shutil
+        from .auth_store import AuthStore
+        from .cli_session_store import CliSessionStore
+
+        cli_cfg = self._CLI_PROVIDER_CONFIGS.get(provider)
+        if not cli_cfg:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Unknown CLI provider: {provider}",
+            )
+
+        label = f"{provider}-CLI"
+
+        store = AuthStore()
+        profile = store.get_best_profile(provider)
+        if not profile:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"No {provider} auth profile found. Run:\n"
+                    f"  metaclaw auth paste-token --provider {provider}\n"
+                    f"or: metaclaw auth paste-key --provider {provider}"
+                ),
+            )
+
+        # Resolve CLI binary
+        cli_bin = shutil.which(cli_cfg["binary"])
+        if not cli_bin:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"{cli_cfg['binary']} CLI not found in PATH. Install it:\n"
+                    f"  {cli_cfg['install_hint']}"
+                ),
+            )
+
+        # Extract system prompt and user prompt from OpenAI-format messages
+        messages = body.get("messages", [])
+        system_text = ""
+        conversation_parts: list[str] = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = "\n".join(
+                    block.get("text", "")
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                )
+            if not isinstance(content, str):
+                content = str(content) if content else ""
+            if role == "system":
+                system_text = content
+            elif role == "user":
+                conversation_parts.append(content)
+            elif role == "assistant":
+                conversation_parts.append(f"[Previous assistant response]: {content}")
+
+        prompt_text = "\n\n".join(conversation_parts)
+
+        # ── Session management ─────────────────────────────────────
+        cli_sessions = CliSessionStore()
+        metaclaw_sid = session_id or "default"
+        use_resume = False
+        cli_session_id = ""
+
+        if cli_cfg.get("session_arg"):
+            cli_session_id, is_new_session = cli_sessions.resolve_session(
+                metaclaw_session_id=f"{provider}:{metaclaw_sid}",
+                auth_profile_id=profile.profile_id,
+                system_prompt=system_text,
+            )
+            use_resume = not is_new_session
+
+        # Model aliases
+        model = self.config.llm_model_id or cli_cfg["default_model"]
+        aliases: dict[str, str] = cli_cfg.get("model_aliases", {})
+        cli_model = aliases.get(model, model)
+
+        # ── Build CLI arguments ────────────────────────────────────
+        MAX_PROMPT_ARG_CHARS = 100_000
+        use_stdin = len(prompt_text) > MAX_PROMPT_ARG_CHARS
+
+        args: list[str] = [cli_bin] + list(cli_cfg["base_args"])
+
+        # Model
+        if cli_cfg.get("model_arg"):
+            args.extend([cli_cfg["model_arg"], cli_model])
+
+        # Session management (provider-specific)
+        if cli_cfg.get("session_arg") and cli_cfg.get("resume_args"):
+            if use_resume:
+                resume_args = [
+                    a.replace("{sessionId}", cli_session_id)
+                    for a in cli_cfg["resume_args"]
+                ]
+                args.extend(resume_args)
+            else:
+                args.extend([cli_cfg["session_arg"], cli_session_id])
+                if system_text and cli_cfg.get("system_prompt_arg"):
+                    args.extend([cli_cfg["system_prompt_arg"], system_text])
+        else:
+            # No session support — always pass system prompt if available
+            if system_text and cli_cfg.get("system_prompt_arg"):
+                args.extend([cli_cfg["system_prompt_arg"], system_text])
+
+        # Prompt: append as trailing arg unless too long
+        if not use_stdin:
+            args.append(prompt_text)
+
+        # ── Environment: auth credentials ──────────────────────────
+        import os
+        env = dict(os.environ)
+        for key in cli_cfg.get("clear_env", []):
+            env.pop(key, None)
+
+        oauth_env = cli_cfg["oauth_env_var"]
+        api_key_env = cli_cfg["api_key_env_var"]
+
+        if profile.is_token:
+            if oauth_env in env:
+                logger.info("[%s] auth: host %s present", label, oauth_env)
+            elif profile.access_token:
+                if profile.refresh_token and profile.expires_at:
+                    token_val = _json.dumps({
+                        "accessToken": profile.access_token,
+                        "refreshToken": profile.refresh_token,
+                        "expiresAt": profile.expires_at,
+                    })
+                else:
+                    token_val = profile.access_token
+                env[oauth_env] = token_val
+                _at = profile.access_token
+                logger.info(
+                    "[%s] auth: injecting stored token (access=%s…%s)",
+                    label,
+                    _at[:12] if len(_at) > 12 else _at,
+                    _at[-4:] if len(_at) > 4 else "",
+                )
+            else:
+                logger.info("[%s] auth: relying on CLI keychain", label)
+        elif profile.is_api_key:
+            env[api_key_env] = profile.api_key
+            logger.info("[%s] auth: injecting API key via %s", label, api_key_env)
+
+        logger.info(
+            "[%s] spawning %s (model=%s, cli_model=%s, "
+            "prompt=%d chars, system=%d chars, input=%s, "
+            "session=%s, resume=%s)",
+            label, cli_cfg["binary"], model, cli_model,
+            len(prompt_text), len(system_text),
+            "stdin" if use_stdin else "arg",
+            (cli_session_id[:12] + "...") if cli_session_id else "(none)",
+            use_resume,
+        )
+
+        # ── Spawn CLI subprocess ───────────────────────────────────
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdin=asyncio.subprocess.PIPE if use_stdin else None,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+            stdin_bytes = prompt_text.encode("utf-8") if use_stdin else None
+            stdout_raw, stderr_raw = await asyncio.wait_for(
+                proc.communicate(input=stdin_bytes),
+                timeout=600.0,
+            )
+        except asyncio.TimeoutError:
+            logger.error("[%s] CLI process timed out (600s)", label)
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise HTTPException(
+                status_code=504,
+                detail=f"{cli_cfg['binary']} CLI timed out after 600 seconds.",
+            )
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=503,
+                detail=f"{cli_cfg['binary']} CLI binary not found.",
+            )
+        except Exception as e:
+            logger.error("[%s] spawn error: %s", label, e, exc_info=True)
+            raise HTTPException(
+                status_code=502,
+                detail=f"{cli_cfg['binary']} CLI error: {e}",
+            ) from e
+
+        stdout_text = stdout_raw.decode("utf-8", errors="replace").strip()
+        stderr_text = stderr_raw.decode("utf-8", errors="replace").strip()
+
+        if proc.returncode != 0:
+            from .failover import (
+                classify_failover_reason,
+                resolve_failover_status,
+                format_failover_detail,
+            )
+
+            err_combined = stderr_text or stdout_text
+            reason = classify_failover_reason(err_combined)
+            status_code = resolve_failover_status(reason)
+
+            logger.error(
+                "[%s] exit code %d, reason=%s (→%d)\n"
+                "stderr: %s\nstdout (last 2000): %s",
+                label, proc.returncode, reason, status_code,
+                stderr_text[:1000] or "(empty)",
+                stdout_text[-2000:] or "(empty)",
+            )
+
+            is_billing = reason in ("billing", "rate_limit")
+            profile.mark_error(billing=is_billing)
+            store.save()
+
+            if cli_session_id and (reason == "session_expired" or use_resume):
+                logger.info("[%s] clearing session %s (reason=%s)", label, metaclaw_sid, reason)
+                cli_sessions.clear_session(f"{provider}:{metaclaw_sid}")
+
+            raise HTTPException(
+                status_code=status_code,
+                detail=format_failover_detail(reason, err_combined),
+            )
+
+        # ── Parse output ───────────────────────────────────────────
+        response_text = ""
+
+        if cli_cfg["output_format"] == "jsonl":
+            # JSONL (stream-json) output — used by Claude CLI
+            output_session_id = cli_sessions.extract_session_id_from_jsonl(stdout_text)
+
+            for line in stdout_text.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = _json.loads(line)
+                    if not isinstance(obj, dict):
+                        continue
+                    if obj.get("type") == "result":
+                        result_text = obj.get("result", "") or ""
+                        if obj.get("is_error"):
+                            from .failover import (
+                                classify_failover_reason,
+                                resolve_failover_status,
+                                format_failover_detail,
+                            )
+                            reason = classify_failover_reason(result_text)
+                            logger.error(
+                                "[%s] result is_error=true, reason=%s: %s",
+                                label, reason, result_text[:300],
+                            )
+                            profile.mark_error(billing=reason in ("billing", "rate_limit"))
+                            store.save()
+                            if cli_session_id and reason == "session_expired":
+                                cli_sessions.clear_session(f"{provider}:{metaclaw_sid}")
+                            raise HTTPException(
+                                status_code=resolve_failover_status(reason),
+                                detail=format_failover_detail(reason, result_text),
+                            )
+                        response_text = result_text
+                        break
+                    if obj.get("type") == "assistant" and obj.get("content"):
+                        for block in obj["content"]:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                response_text += block.get("text", "")
+                except _json.JSONDecodeError:
+                    continue
+
+            if cli_session_id and output_session_id and output_session_id != cli_session_id:
+                logger.info(
+                    "[%s] CLI returned session_id=%s (was %s)",
+                    label, output_session_id[:12] + "...", cli_session_id[:12] + "...",
+                )
+                cli_sessions.update_cli_session_id(
+                    f"{provider}:{metaclaw_sid}", output_session_id,
+                )
+        else:
+            # Plain text output — used by Codex, Gemini
+            response_text = stdout_text
+
+        if not response_text:
+            response_text = stdout_text
+
+        if not response_text:
+            logger.warning("[%s] empty response", label)
+            raise HTTPException(
+                status_code=502,
+                detail=f"{cli_cfg['binary']} CLI returned empty response.",
+            )
+
+        profile.mark_used()
+        profile.reset_errors()
+        store.save()
+
+        logger.info(
+            "[%s] success, response=%d chars, session=%s, resumed=%s",
+            label, len(response_text),
+            (cli_session_id[:12] + "...") if cli_session_id else "(none)",
+            use_resume,
+        )
+
+        return self._claude_cli_to_openai_response(response_text, model)
+
+    async def _forward_to_anthropic(
+        self, body: dict[str, Any], session_id: str = "",
+    ) -> dict[str, Any]:
+        """Forward to Claude via Claude CLI subprocess."""
+        return await self._forward_to_cli(body, session_id=session_id, provider="anthropic")
+
+    @staticmethod
+    def _claude_cli_to_openai_response(
+        text: str,
+        model: str,
+    ) -> dict[str, Any]:
+        """Wrap Claude CLI text output in OpenAI chat completion format."""
+        return {
+            "id": f"cli-{id(text)}",
+            "object": "chat.completion",
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": text,
+                },
+                "finish_reason": "stop",
+                "logprobs": None,
+            }],
+            "usage": {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+            },
+        }
+
+    async def _forward_to_openai_compat(self, body: dict[str, Any]) -> dict[str, Any]:
         """Forward to a real OpenAI-compatible API (skills_only mode)."""
         import httpx
 

@@ -25,7 +25,7 @@
 
 <br/>
 
-[Tong quan](#-tong-quan) • [Bat dau nhanh](#-bat-dau-nhanh) • [Cau hinh](#️-cau-hinh) • [Che do Skills](#-che-do-skills) • [Che do RL](#-che-do-rl) • [Che do MadMax](#-che-do-madmax-mac-dinh) • [Trich dan](#-trich-dan)
+[Tong quan](#-tong-quan) • [Bat dau nhanh](#-bat-dau-nhanh) • [Cau hinh](#️-cau-hinh) • [Che do Skills](#-che-do-skills) • [Che do RL](#-che-do-rl) • [Che do Auto](#-che-do-auto-mac-dinh) • [Trich dan](#-trich-dan)
 
 </div>
 
@@ -38,9 +38,7 @@
 
 ```bash
 metaclaw setup              # trinh huong dan cau hinh lan dau
-metaclaw start              # mac dinh: che do madmax, Skills + huan luyen RL theo lich
-metaclaw start --daemon     # chay ngam, log -> ~/.metaclaw/metaclaw.log
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # duong dan log tuy chinh
+metaclaw start              # mac dinh: che do auto, Skills + huan luyen RL theo lich
 metaclaw start --mode rl    # RL khong co bo lap lich (huan luyen ngay khi du batch)
 metaclaw start --mode skills_only  # chi Skills, khong RL (khong can Tinker)
 ```
@@ -88,7 +86,7 @@ Cau hinh mot lan voi `metaclaw setup`, sau do `metaclaw start` se khoi dong prox
 |--------|----------|-------|
 | `skills_only` | | Proxy toi LLM API cua ban. Tiem Skill va tu dong tom tat sau moi phien. Khong can GPU / Tinker. |
 | `rl` | | Skill + huan luyen RL (GRPO). Huan luyen ngay khi batch day. OPD tuy chon de chung cat tu mo hinh giao vien. |
-| `madmax` | ✅ | Skill + RL + bo lap lich thong minh. Cap nhat trong so RL chi chay trong khoang ngu/ranh/hop. |
+| `auto` | ✅ | Skill + RL + bo lap lich thong minh. Cap nhat trong so RL chi chay trong khoang ngu/ranh/hop. |
 
 ### **Bộ nhớ dài hạn**
 MetaClaw có thể lưu sự kiện, sở thích và lịch sử dự án qua các phiên và chèn ngữ cảnh liên quan mỗi lượt — để agent nhớ những gì bạn đã nói, kể cả nhiều tuần sau.
@@ -199,31 +197,36 @@ Tep cau hinh nam tai `~/.metaclaw/config.yaml`, duoc tao boi `metaclaw setup`.
 
 ```
 metaclaw setup                  # Trinh huong dan cau hinh lan dau
-metaclaw start                  # Khoi dong MetaClaw (mac dinh: che do madmax)
-metaclaw start --daemon         # Khoi dong MetaClaw chay ngam
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # Duong dan log tuy chinh
+metaclaw start                  # Khoi dong MetaClaw (mac dinh: che do auto)
 metaclaw start --mode rl        # Bat che do RL cho phien nay (khong co bo lap lich)
 metaclaw start --mode skills_only  # Bat che do chi Skills cho phien nay
 metaclaw stop                   # Dung phien ban MetaClaw dang chay
 metaclaw status                 # Kiem tra tinh trang proxy, che do chay va trang thai bo lap lich
 metaclaw config show            # Xem cau hinh hien tai
 metaclaw config KEY VALUE       # Dat gia tri cau hinh
+metaclaw auth paste-token --provider anthropic      # Luu token OAuth (anthropic | openai-codex | gemini)
+metaclaw auth status                                # Hien thi tat ca cac ho so xac thuc da luu
 ```
 
-Khi khoi dong MetaClaw voi `--daemon`, lenh se doi cho den khi proxy cuc bo san sang truoc khi tra ve. Su dung `metaclaw status` de kiem tra trang thai va `metaclaw stop` de dung tien trinh chay ngam.
+Su dung `metaclaw status` de kiem tra trang thai san sang va `metaclaw stop` de dung tien trinh.
 
 <details>
 <summary><b>Tham chieu cau hinh day du (nhan de mo rong)</b></summary>
 
 ```yaml
-mode: madmax               # "madmax" | "rl" | "skills_only"
+mode: auto                 # "auto" | "rl" | "skills_only"
 claw_type: openclaw        # "openclaw" | "copaw" | "ironclaw" | "picoclaw" | "zeroclaw" | "nanoclaw" | "nemoclaw" | "hermes" | "none"
 
 llm:
+  auth_method: api_key      # "api_key" | "oauth_token"
   provider: kimi            # kimi | qwen | openai | minimax | novita | openrouter | volcengine | custom
   model_id: moonshotai/Kimi-K2.5
   api_base: https://api.moonshot.cn/v1
   api_key: sk-...
+  # vi du oauth_token (token luu bang `metaclaw auth paste-token`):
+  # auth_method: oauth_token
+  # provider: anthropic     # anthropic | openai-codex | gemini
+  # model_id: claude-sonnet-4-6
 
 proxy:
   port: 30000
@@ -265,10 +268,10 @@ opd:
 max_context_tokens: 20000   # gioi han token prompt truoc khi cat; 0 = khong cat
                             # (khuyen nghi trong skills_only voi mo hinh cloud ngu canh lon)
 context_window: 0           # cua so ngu canh bao cho agent (vi du nguong nen OpenClaw);
-                            # 0 = tu dong (khoang 200 000 trong skills_only, 32 768 trong rl/madmax)
+                            # 0 = tu dong (khoang 200 000 trong skills_only, 32 768 trong rl/auto)
 
-scheduler:                  # v0.3: bo lap lich meta-learning (tu dong bat trong che do madmax)
-  enabled: false            # che do madmax tu dong bat; che do rl can dat thu cong
+scheduler:                  # v0.3: bo lap lich meta-learning (tu dong bat trong che do auto)
+  enabled: false            # che do auto tu dong bat; che do rl can dat thu cong
   sleep_start: "23:00"
   sleep_end: "07:00"
   idle_threshold_minutes: 30
@@ -365,13 +368,13 @@ Mo hinh giao vien can duoc phuc vu qua endpoint `/v1/completions` tuong thich Op
 
 ---
 
-## 🧠 Che do MadMax (Mac dinh)
+## 🧠 Che do Auto (Mac dinh)
 
 **`metaclaw start`**
 
 Tat ca tinh nang cua Che do RL, cong them bo lap lich meta-learning hoan cap nhat trong so den cac khoang thoi gian nguoi dung khong hoat dong, dam bao agent khong bi gian doan khi dang su dung. Day la che do mac dinh.
 
-Buoc cap nhat nong trong so RL tam dung agent trong vai phut. Thay vi huan luyen ngay khi batch day (nhu Che do RL), MadMax cho doi mot cua so thich hop.
+Buoc cap nhat nong trong so RL tam dung agent trong vai phut. Thay vi huan luyen ngay khi batch day (nhu Che do RL), che do auto cho doi mot cua so thich hop.
 
 Ba dieu kien kich hoat cua so cap nhat (chi can mot trong ba):
 

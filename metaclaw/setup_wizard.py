@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .config_store import CONFIG_DIR, ConfigStore
 
-_PROVIDER_PRESETS = {
+_API_KEY_PROVIDERS = {
     "kimi": {
         "api_base": "https://api.moonshot.cn/v1",
         "model_id": "moonshotai/Kimi-K2.5",
@@ -40,6 +40,27 @@ _PROVIDER_PRESETS = {
     "custom": {
         "api_base": "",
         "model_id": "",
+    },
+}
+
+_OAUTH_TOKEN_PROVIDERS = {
+    "anthropic": {
+        "model_id": "claude-sonnet-4-6",
+        "cli_binary": "claude",
+        "env_var": "CLAUDE_CODE_OAUTH_TOKEN",
+        "hint": "Claude Code CLI (npm install -g @anthropic-ai/claude-code)",
+    },
+    "openai-codex": {
+        "model_id": "codex-mini",
+        "cli_binary": "codex",
+        "env_var": "CODEX_OAUTH_TOKEN",
+        "hint": "OpenAI Codex CLI (npm install -g @openai/codex)",
+    },
+    "gemini": {
+        "model_id": "gemini-2.5-pro",
+        "cli_binary": "gemini",
+        "env_var": "GEMINI_OAUTH_TOKEN",
+        "hint": "Gemini CLI (npm install -g @anthropic-ai/gemini-cli)",
     },
 }
 
@@ -111,34 +132,108 @@ class SetupWizard:
             default=current_mode,
         )
 
-        # ---- LLM provider ----
+        # ---- LLM auth method ----
         print("\n--- LLM Configuration ---")
         current_llm = existing.get("llm", {})
-        current_provider = current_llm.get("provider", "custom")
-        provider = _prompt_choice(
-            "LLM provider",
-            ["kimi", "qwen", "openai", "minimax", "novita", "openrouter", "volcengine", "custom"],
-            default=current_provider,
+        current_auth_method = current_llm.get("auth_method", "api_key")
+
+        auth_method = _prompt_choice(
+            "Auth method",
+            ["oauth_token", "api_key"],
+            default=current_auth_method,
         )
-        preset = _PROVIDER_PRESETS[provider]
-        if provider == "custom":
-            api_base = _prompt(
-                "API base URL",
-                default=current_llm.get("api_base") or preset["api_base"],
+
+        provider = ""
+        api_base = ""
+        api_key = ""
+        model_id = ""
+        oauth_token = ""
+
+        if auth_method == "oauth_token":
+            # ── OAuth token path: CLI subprocess ──────────────
+            print("\n  OAuth token providers use CLI tools (Claude Code, Codex, Gemini).")
+            print("  MetaClaw will forward requests via the CLI subprocess.\n")
+
+            current_provider = current_llm.get("provider", "anthropic")
+            if current_provider not in _OAUTH_TOKEN_PROVIDERS:
+                current_provider = "anthropic"
+
+            provider = _prompt_choice(
+                "Provider",
+                list(_OAUTH_TOKEN_PROVIDERS.keys()),
+                default=current_provider,
             )
+            preset = _OAUTH_TOKEN_PROVIDERS[provider]
+            print(f"  CLI: {preset['hint']}")
+
+            model_id = _prompt(
+                "Model ID",
+                default=current_llm.get("model_id") or preset["model_id"],
+            )
+
+            # Check for existing stored token
+            from .auth_store import AuthStore
+            store = AuthStore()
+            profile = store.get_best_profile(provider)
+            if profile:
+                cred_preview = profile.credential[:12] + "..." + profile.credential[-4:]
+                print(f"\n  Existing token found: {profile.profile_id} ({cred_preview})")
+                update_token = _prompt_bool("Update token", default=False)
+            else:
+                print(f"\n  No {provider} token found.")
+                update_token = True
+
+            if update_token:
+                import getpass
+                env_var = preset["env_var"]
+                print(f"\n  Paste your {provider} OAuth token ({env_var} value).")
+                print("  Accepts full JSON or just the access token string.\n")
+                try:
+                    oauth_token = getpass.getpass("  Token: ")
+                except (EOFError, KeyboardInterrupt):
+                    print("\n  Skipped.")
+                    oauth_token = ""
+
+                if oauth_token.strip():
+                    try:
+                        profile = store.paste_oauth_token(provider, oauth_token)
+                        cred_preview = profile.credential[:12] + "..." + profile.credential[-4:]
+                        print(f"  Stored: {profile.profile_id} ({cred_preview})")
+                    except ValueError as e:
+                        print(f"  Error: {e}")
+                        print("  You can set it later: metaclaw config llm.oauth_token <token>")
+
         else:
-            # Named providers use a fixed OpenAI-compatible endpoint; no prompt.
-            api_base = preset["api_base"]
-            print(f"  Using fixed API base URL for {provider}: {api_base}")
-        model_id = _prompt(
-            "Model ID",
-            default=current_llm.get("model_id") or preset["model_id"],
-        )
-        api_key = _prompt(
-            "API key",
-            default=current_llm.get("api_key", ""),
-            hide=True,
-        )
+            # ── API key path: direct API call ─────────────────
+            current_provider = current_llm.get("provider", "custom")
+            if current_provider not in _API_KEY_PROVIDERS:
+                current_provider = "custom"
+
+            provider = _prompt_choice(
+                "Provider",
+                list(_API_KEY_PROVIDERS.keys()),
+                default=current_provider,
+            )
+            preset = _API_KEY_PROVIDERS[provider]
+
+            if provider == "custom":
+                api_base = _prompt(
+                    "API base URL",
+                    default=current_llm.get("api_base") or preset["api_base"],
+                )
+            else:
+                api_base = preset["api_base"]
+                print(f"  API base: {api_base}")
+
+            model_id = _prompt(
+                "Model ID",
+                default=current_llm.get("model_id") or preset["model_id"],
+            )
+            api_key = _prompt(
+                "API key",
+                default=current_llm.get("api_key", ""),
+                hide=True,
+            )
 
         # ---- Skills ----
         print("\n--- Skills Configuration ---")
@@ -322,6 +417,7 @@ class SetupWizard:
             "mode": mode,
             "llm": {
                 "provider": provider,
+                "auth_method": auth_method,
                 "model_id": model_id,
                 "api_base": api_base,
                 "api_key": api_key,

@@ -25,7 +25,7 @@
 
 <br/>
 
-[अवलोकन](#-अवलोकन) • [त्वरित शुरुआत](#-त्वरित-शुरुआत) • [कॉन्फ़िगरेशन](#️-कॉन्फ़िगरेशन) • [Skills मोड](#-skills-मोड) • [RL मोड](#-rl-मोड) • [MadMax मोड](#-madmax-मोड-डिफ़ॉल्ट) • [उद्धरण](#-उद्धरण)
+[अवलोकन](#-अवलोकन) • [त्वरित शुरुआत](#-त्वरित-शुरुआत) • [कॉन्फ़िगरेशन](#️-कॉन्फ़िगरेशन) • [Skills मोड](#-skills-मोड) • [RL मोड](#-rl-मोड) • [Auto मोड](#-auto-मोड-डिफ़ॉल्ट) • [उद्धरण](#-उद्धरण)
 
 </div>
 
@@ -38,9 +38,7 @@
 
 ```bash
 metaclaw setup              # पहली बार का कॉन्फ़िगरेशन विज़ार्ड
-metaclaw start              # डिफ़ॉल्ट madmax मोड: Skills + शेड्यूल्ड RL ट्रेनिंग
-metaclaw start --daemon     # बैकग्राउंड में चलाएं, लॉग -> ~/.metaclaw/metaclaw.log
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # कस्टम लॉग पथ
+metaclaw start              # डिफ़ॉल्ट auto मोड: Skills + शेड्यूल्ड RL ट्रेनिंग
 metaclaw start --mode rl    # बिना शेड्यूलर के RL (batch भरते ही ट्रेनिंग)
 metaclaw start --mode skills_only  # केवल Skills, कोई RL नहीं (Tinker की ज़रूरत नहीं)
 ```
@@ -88,7 +86,7 @@ GPU क्लस्टर की ज़रूरत नहीं। MetaClaw क
 |------|---------|--------|
 | `skills_only` | | प्रॉक्सी के माध्यम से आपका LLM API। Skills इंजेक्ट, सेशन के बाद ऑटो-सारांश। GPU / Tinker की ज़रूरत नहीं। |
 | `rl` | | Skills + RL ट्रेनिंग (GRPO)। batch भरते ही तुरंत ट्रेनिंग। शिक्षक डिस्टिलेशन के लिए वैकल्पिक OPD। |
-| `madmax` | ✅ | Skills + RL + स्मार्ट शेड्यूलर। RL वेट अपडेट केवल नींद/निष्क्रिय/मीटिंग विंडो में चलते हैं। |
+| `auto` | ✅ | Skills + RL + स्मार्ट शेड्यूलर। RL वेट अपडेट केवल नींद/निष्क्रिय/मीटिंग विंडो में चलते हैं। |
 
 ### **दीर्घकालिक स्मृति**
 MetaClaw सत्रों के बीच तथ्य, प्राथमिकताएँ और प्रोजेक्ट इतिहास रख सकता है और हर चक्र में संबंधित संदर्भ डाल सकता है — ताकि आपका एजेंट हफ्तों बाद भी याद रखे कि आपने क्या कहा।
@@ -199,31 +197,36 @@ metaclaw start
 
 ```
 metaclaw setup                  # पहली बार का इंटरैक्टिव कॉन्फ़िगरेशन विज़ार्ड
-metaclaw start                  # MetaClaw शुरू करें (डिफ़ॉल्ट: madmax मोड)
-metaclaw start --daemon         # MetaClaw बैकग्राउंड में शुरू करें
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # कस्टम लॉग पथ
+metaclaw start                  # MetaClaw शुरू करें (डिफ़ॉल्ट: auto मोड)
 metaclaw start --mode rl        # इस सेशन के लिए RL मोड सक्रिय करें (बिना शेड्यूलर)
 metaclaw start --mode skills_only  # इस सेशन के लिए केवल Skills मोड सक्रिय करें
 metaclaw stop                   # चल रहे MetaClaw इंस्टेंस को रोकें
 metaclaw status                 # प्रॉक्सी स्वास्थ्य, चल रहा मोड, और शेड्यूलर स्थिति देखें
 metaclaw config show            # वर्तमान कॉन्फ़िगरेशन देखें
 metaclaw config KEY VALUE       # कॉन्फ़िगरेशन मान सेट करें
+metaclaw auth paste-token --provider anthropic      # OAuth टोकन संग्रहीत करें (anthropic | openai-codex | gemini)
+metaclaw auth status                                # सभी संग्रहीत प्रमाणीकरण प्रोफ़ाइल दिखाएं
 ```
 
-जब आप MetaClaw को `--daemon` के साथ शुरू करते हैं, तो कमांड लोकल प्रॉक्सी के तैयार होने तक प्रतीक्षा करता है। तत्परता की जाँच के लिए `metaclaw status` और बैकग्राउंड प्रक्रिया को रोकने के लिए `metaclaw stop` का उपयोग करें।
+तत्परता की जाँच के लिए `metaclaw status` और प्रक्रिया को रोकने के लिए `metaclaw stop` का उपयोग करें।
 
 <details>
 <summary><b>पूर्ण कॉन्फ़िगरेशन संदर्भ (विस्तार के लिए क्लिक करें)</b></summary>
 
 ```yaml
-mode: madmax               # "madmax" | "rl" | "skills_only"
+mode: auto                 # "auto" | "rl" | "skills_only"
 claw_type: openclaw        # "openclaw" | "copaw" | "ironclaw" | "picoclaw" | "zeroclaw" | "nanoclaw" | "nemoclaw" | "hermes" | "none"
 
 llm:
+  auth_method: api_key      # "api_key" | "oauth_token"
   provider: kimi            # kimi | qwen | openai | minimax | novita | openrouter | volcengine | custom
   model_id: moonshotai/Kimi-K2.5
   api_base: https://api.moonshot.cn/v1
   api_key: sk-...
+  # oauth_token उदाहरण (टोकन `metaclaw auth paste-token` से संग्रहीत):
+  # auth_method: oauth_token
+  # provider: anthropic     # anthropic | openai-codex | gemini
+  # model_id: claude-sonnet-4-6
 
 proxy:
   port: 30000
@@ -265,10 +268,10 @@ opd:
 max_context_tokens: 20000   # काटने से पहले प्रॉम्प्ट टोकन सीमा；0 = कोई काट नहीं
                             # (बड़े-संदर्भ क्लाउड मॉडलों के साथ skills_only में अनुशंसित)
 context_window: 0           # एजेंट को बताई गई संदर्भ खिड़की (उदा. OpenClaw संकुचन थ्रेशोल्ड)；
-                            # 0 = ऑटो (skills_only में ≈200000, rl/madmax में 32768)
+                            # 0 = ऑटो (skills_only में ≈200000, rl/auto में 32768)
 
-scheduler:                  # v0.3: मेटा-लर्निंग शेड्यूलर (madmax मोड में स्वचालित सक्रिय)
-  enabled: false            # madmax मोड में स्वचालित सक्रिय; rl मोड में मैनुअल सेट करें
+scheduler:                  # v0.3: मेटा-लर्निंग शेड्यूलर (auto मोड में स्वचालित सक्रिय)
+  enabled: false            # auto मोड में स्वचालित सक्रिय; rl मोड में मैनुअल सेट करें
   sleep_start: "23:00"
   sleep_end: "07:00"
   idle_threshold_minutes: 30
@@ -365,13 +368,13 @@ metaclaw config opd.kl_penalty_coef 1.0
 
 ---
 
-## 🧠 MadMax मोड (डिफ़ॉल्ट)
+## 🧠 Auto मोड (डिफ़ॉल्ट)
 
 **`metaclaw start`**
 
 RL मोड की सभी सुविधाएँ, साथ ही एक मेटा-लर्निंग शेड्यूलर जो वेट अपडेट को उपयोगकर्ता-निष्क्रिय विंडो तक स्थगित कर देता है ताकि सक्रिय उपयोग के दौरान Agent में बाधा न आए। यह डिफ़ॉल्ट मोड है।
 
-RL वेट हॉट-स्वैप स्टेप Agent को कई मिनट के लिए रोक देता है। batch भरते ही तुरंत ट्रेनिंग शुरू करने के बजाय (जैसा RL मोड करता है), MadMax एक उपयुक्त विंडो की प्रतीक्षा करता है।
+RL वेट हॉट-स्वैप स्टेप Agent को कई मिनट के लिए रोक देता है। batch भरते ही तुरंत ट्रेनिंग शुरू करने के बजाय (जैसा RL मोड करता है), auto मोड एक उपयुक्त विंडो की प्रतीक्षा करता है।
 
 तीन स्थितियाँ अपडेट विंडो ट्रिगर करती हैं (कोई भी एक पर्याप्त है):
 

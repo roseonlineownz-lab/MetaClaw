@@ -370,8 +370,184 @@ def config_cmd(key_or_action: str, value: str | None):
             click.echo(f"{key_or_action}: {result}")
         return
 
+    # Special handling: llm.oauth_token stores via AuthStore
+    if key_or_action == "llm.oauth_token":
+        from .auth_store import AuthStore
+        provider = cs.get("llm.provider") or "anthropic"
+        store = AuthStore()
+        try:
+            profile = store.paste_oauth_token(provider, value)
+            cred_preview = profile.credential[:12] + "..." + profile.credential[-4:]
+            click.echo(f"Stored {provider} token: {profile.profile_id} ({cred_preview})")
+        except ValueError as e:
+            click.echo(f"Error: {e}", err=True)
+        return
+
     cs.set(key_or_action, value)
     click.echo(f"Set {key_or_action} = {cs.get(key_or_action)}")
+
+
+# ------------------------------------------------------------------ #
+# Auth commands                                                       #
+# ------------------------------------------------------------------ #
+
+@metaclaw.group()
+def auth():
+    """Manage authentication profiles (OAuth tokens & API keys)."""
+
+
+@auth.command(name="paste-token")
+@click.option(
+    "--provider",
+    type=click.Choice(["anthropic", "openai-codex", "gemini"]),
+    default="anthropic",
+    show_default=True,
+    help="CLI provider to authenticate with.",
+)
+def auth_paste_token(provider: str):
+    """Paste an OAuth token for a CLI-backed provider.
+
+    \b
+    Supported providers & their env vars:
+      anthropic    → CLAUDE_CODE_OAUTH_TOKEN  (Claude Code CLI)
+      openai-codex → CODEX_OAUTH_TOKEN        (OpenAI Codex CLI)
+      gemini       → GEMINI_OAUTH_TOKEN        (Gemini CLI)
+
+    \b
+    Usage:
+      metaclaw auth paste-token --provider anthropic
+      metaclaw auth paste-token --provider openai-codex
+      metaclaw auth paste-token --provider gemini
+
+    You will be prompted to paste the token. Accepts either:
+      - Full JSON: {"accessToken":"...", "refreshToken":"...", "expiresAt":"..."}
+      - Just the raw access token string
+
+    The token is stored in ~/.metaclaw/auth-profiles.json and injected
+    into the corresponding CLI subprocess as an env var.
+    """
+    import getpass
+    from .auth_store import AuthStore
+
+    env_var = AuthStore.OAUTH_ENV_VARS.get(provider, "OAUTH_TOKEN")
+    cli_bin = AuthStore.CLI_BINARIES.get(provider, provider)
+
+    click.echo(f"\nPaste your {provider} token ({env_var} value).")
+    click.echo(f"CLI binary: {cli_bin}")
+    click.echo("This can be the full JSON or just the access token string.\n")
+
+    try:
+        token_input = getpass.getpass("Token: ")
+    except (EOFError, KeyboardInterrupt):
+        click.echo("\nCancelled.")
+        return
+
+    if not token_input.strip():
+        click.echo("No token provided.", err=True)
+        return
+
+    store = AuthStore()
+    try:
+        profile = store.paste_oauth_token(provider, token_input)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        return
+
+    cred_preview = profile.credential[:12] + "..." + profile.credential[-4:]
+    click.echo(f"\nAuth profile: {profile.profile_id} ({profile.provider}/{profile.method})")
+    click.echo(f"Credential:   {cred_preview}")
+    if profile.expires_at:
+        click.echo(f"Expires:      {profile.expires_at}")
+    else:
+        click.echo("Expires:      static (no expiry info)")
+    click.echo(f"\nStored in: {store.path}")
+
+    # Suggest config if not already set for this provider
+    _PROVIDER_HINTS: dict[str, dict[str, str]] = {
+        "anthropic": {
+            "model": "claude-sonnet-4-6",
+        },
+        "openai-codex": {
+            "model": "codex-mini",
+        },
+        "gemini": {
+            "model": "gemini-2.5-pro",
+        },
+    }
+    cs = ConfigStore()
+    data = cs.load()
+    llm = data.get("llm", {})
+    current_provider = llm.get("provider", "")
+
+    if current_provider != provider:
+        hint = _PROVIDER_HINTS.get(provider, {})
+        model = hint.get("model", "")
+        click.echo(
+            f"\nTip: To use {provider} as your LLM via CLI, run:\n"
+            f"  metaclaw config llm.provider {provider}\n"
+            f"  metaclaw config llm.auth_method oauth_token\n"
+            f"  metaclaw config llm.model_id {model}\n"
+        )
+
+
+@auth.command(name="paste-key")
+@click.option(
+    "--provider",
+    required=True,
+    help="Model provider (e.g. anthropic, openai, moonshot).",
+)
+def auth_paste_key(provider: str):
+    """Paste an API key for any provider.
+
+    \b
+    Usage:
+      metaclaw auth paste-key --provider openai
+      metaclaw auth paste-key --provider anthropic
+    """
+    import getpass
+    from .auth_store import AuthStore
+
+    click.echo(f"\nPaste your {provider} API key.\n")
+
+    try:
+        key_input = getpass.getpass("API Key: ")
+    except (EOFError, KeyboardInterrupt):
+        click.echo("\nCancelled.")
+        return
+
+    if not key_input.strip():
+        click.echo("No key provided.", err=True)
+        return
+
+    store = AuthStore()
+    profile = store.paste_api_key(provider, key_input)
+
+    cred_preview = profile.credential[:8] + "..." + profile.credential[-4:]
+    click.echo(f"\nAuth profile: {profile.profile_id} ({profile.provider}/{profile.method})")
+    click.echo(f"Credential:   {cred_preview}")
+    click.echo(f"Stored in: {store.path}")
+
+
+@auth.command(name="status")
+def auth_status():
+    """Show all configured auth profiles and their status."""
+    from .auth_store import AuthStore
+
+    store = AuthStore()
+    click.echo(f"\n{store.describe()}\n")
+
+
+@auth.command(name="remove")
+@click.argument("profile_id")
+def auth_remove(profile_id: str):
+    """Remove an auth profile by its ID (e.g. anthropic:manual)."""
+    from .auth_store import AuthStore
+
+    store = AuthStore()
+    if store.remove(profile_id):
+        click.echo(f"Removed profile: {profile_id}")
+    else:
+        click.echo(f"Profile not found: {profile_id}", err=True)
 
 
 @metaclaw.group()

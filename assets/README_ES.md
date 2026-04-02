@@ -25,7 +25,7 @@
 
 <br/>
 
-[Descripcion](#-descripción) • [Inicio rapido](#-inicio-rápido) • [Configuracion](#️-configuración) • [Modo Skills](#-modo-skills) • [Modo RL](#-modo-rl) • [Modo MadMax](#-modo-madmax-por-defecto) • [Cita](#-cita)
+[Descripcion](#-descripción) • [Inicio rapido](#-inicio-rápido) • [Configuracion](#️-configuración) • [Modo Skills](#-modo-skills) • [Modo RL](#-modo-rl) • [Modo Auto](#-modo-auto-por-defecto) • [Cita](#-cita)
 
 </div>
 
@@ -38,9 +38,7 @@
 
 ```bash
 metaclaw setup              # asistente de configuración inicial
-metaclaw start              # por defecto: modo MadMax, skills + entrenamiento RL programado
-metaclaw start --daemon     # ejecutar en segundo plano, logs -> ~/.metaclaw/metaclaw.log
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # ruta de log personalizada
+metaclaw start              # por defecto: modo auto, skills + entrenamiento RL programado
 metaclaw start --mode rl    # RL sin planificador (entrena inmediatamente al llenar batch)
 metaclaw start --mode skills_only  # solo skills, sin RL (no requiere Tinker)
 ```
@@ -88,7 +86,7 @@ Configura una vez con `metaclaw setup`, luego `metaclaw start` levanta el proxy,
 |------|------------|---------|
 | `skills_only` | | Proxy para tu API LLM. Skills inyectados, resumidos automáticamente tras cada sesión. Sin GPU/Tinker requerido. |
 | `rl` | | Skills + entrenamiento RL (GRPO). Entrena inmediatamente cuando un batch está lleno. OPD opcional para destilación de profesor. |
-| `madmax` | ✅ | Skills + RL + planificador inteligente. Actualizaciones de pesos RL solo durante ventanas de sueño/inactividad/reunión. |
+| `auto` | ✅ | Skills + RL + planificador inteligente. Actualizaciones de pesos RL solo durante ventanas de sueño/inactividad/reunión. |
 
 ### **Memoria a largo plazo**
 MetaClaw puede conservar hechos, preferencias e historial del proyecto entre sesiones e inyectar contexto relevante en cada turno — así tu agente recuerda lo que le dijiste, incluso semanas después.
@@ -199,31 +197,36 @@ La configuración se encuentra en `~/.metaclaw/config.yaml`, creada por `metacla
 
 ```
 metaclaw setup                  # Asistente de configuración inicial interactivo
-metaclaw start                  # Iniciar MetaClaw (por defecto: modo MadMax)
-metaclaw start --daemon         # Iniciar MetaClaw en segundo plano
-metaclaw start --daemon --log-file /tmp/metaclaw.log  # Ruta de log personalizada
+metaclaw start                  # Iniciar MetaClaw (por defecto: modo auto)
 metaclaw start --mode rl        # Forzar modo RL para esta sesión (sin planificador)
 metaclaw start --mode skills_only  # Forzar modo solo skills para esta sesión
 metaclaw stop                   # Detener una instancia de MetaClaw en ejecución
 metaclaw status                 # Verificar estado del proxy, modo en ejecución y planificador
 metaclaw config show            # Ver configuración actual
 metaclaw config KEY VALUE       # Establecer un valor de configuración
+metaclaw auth paste-token --provider anthropic      # Guardar token OAuth (anthropic | openai-codex | gemini)
+metaclaw auth status                                # Mostrar todos los perfiles de autenticación guardados
 ```
 
-Al iniciar MetaClaw con `--daemon`, el comando espera hasta que el proxy local esté disponible antes de retornar. Use `metaclaw status` para verificar el estado y `metaclaw stop` para detener el proceso en segundo plano.
+Use `metaclaw status` para verificar la disponibilidad y `metaclaw stop` para detener el proceso.
 
 <details>
 <summary><b>Referencia completa de configuración (clic para expandir)</b></summary>
 
 ```yaml
-mode: madmax               # "madmax" | "rl" | "skills_only"
+mode: auto                 # "auto" | "rl" | "skills_only"
 claw_type: openclaw        # "openclaw" | "copaw" | "ironclaw" | "picoclaw" | "zeroclaw" | "nanoclaw" | "nemoclaw" | "hermes" | "none"
 
 llm:
+  auth_method: api_key      # "api_key" | "oauth_token"
   provider: kimi            # kimi | qwen | openai | minimax | novita | openrouter | volcengine | custom
   model_id: moonshotai/Kimi-K2.5
   api_base: https://api.moonshot.cn/v1
   api_key: sk-...
+  # ejemplo oauth_token (token almacenado con `metaclaw auth paste-token`):
+  # auth_method: oauth_token
+  # provider: anthropic     # anthropic | openai-codex | gemini
+  # model_id: claude-sonnet-4-6
 
 proxy:
   port: 30000
@@ -265,10 +268,10 @@ opd:
 max_context_tokens: 20000   # límite de tokens del prompt antes de truncar; 0 = sin truncar
                             # (recomendado en skills_only con modelos cloud de gran contexto)
 context_window: 0           # ventana de contexto anunciada al agente (p. ej. umbral de compactación de OpenClaw);
-                            # 0 = auto (≈200 000 en skills_only, 32 768 en rl/madmax)
+                            # 0 = auto (≈200 000 en skills_only, 32 768 en rl/auto)
 
-scheduler:                  # v0.3: planificador de meta-aprendizaje (auto-habilitado en modo MadMax)
-  enabled: false            # modo MadMax lo habilita automáticamente; configurar manualmente para RL
+scheduler:                  # v0.3: planificador de meta-aprendizaje (auto-habilitado en modo auto)
+  enabled: false            # modo auto lo habilita automáticamente; configurar manualmente para RL
   sleep_start: "23:00"
   sleep_end: "07:00"
   idle_threshold_minutes: 30
@@ -365,13 +368,13 @@ El profesor debe servirse detrás de un endpoint `/v1/completions` compatible co
 
 ---
 
-## 🧠 Modo MadMax (Por defecto)
+## 🧠 Modo Auto (Por defecto)
 
 **`metaclaw start`**
 
 Todo lo del Modo RL, más un planificador de meta-aprendizaje que posterga las actualizaciones de pesos a ventanas de inactividad del usuario para que el agente nunca se interrumpa durante el uso activo. Este es el modo por defecto.
 
-El paso de hot-swap de pesos RL pausa el agente durante varios minutos. En lugar de entrenar inmediatamente cuando un batch está lleno (como hace el Modo RL), MadMax espera una ventana apropiada.
+El paso de hot-swap de pesos RL pausa el agente durante varios minutos. En lugar de entrenar inmediatamente cuando un batch está lleno (como hace el Modo RL), el modo auto espera una ventana apropiada.
 
 Tres condiciones activan una ventana de actualización (cualquiera es suficiente):
 
