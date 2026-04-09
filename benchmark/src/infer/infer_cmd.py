@@ -1073,7 +1073,11 @@ async def _run_one_test(
         finally:
             if gateway_proc.returncode is None:
                 gateway_proc.terminate()
-                await gateway_proc.wait()
+                try:
+                    await asyncio.wait_for(gateway_proc.wait(), timeout=8.0)
+                except asyncio.TimeoutError:
+                    gateway_proc.kill()
+                    await gateway_proc.wait()
                 print(f"[{test_id}] Gateway on port {gateway_port} stopped.")
             else:
                 output = _read_gateway_log(gateway_log)

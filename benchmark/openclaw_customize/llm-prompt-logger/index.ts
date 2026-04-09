@@ -2,7 +2,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { OpenClawPluginApi } from "~/openclaw/src/plugins/types.js";
 
-const DEFAULT_LOG_DIR = "/home/xkaiwen/workspace/log_cache/llm_prompts";
+const DEFAULT_LOG_DIR = process.env["METACLAW_ROOT"]
+  ? path.join(process.env["METACLAW_ROOT"], "benchmark", "logs", "llm_prompts")
+  : path.join(process.env["HOME"] ?? ".", ".metaclaw", "llm_prompts");
 
 type PendingInput = {
   timestamp: string;

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-rl_only_run.py — 运行 metaclaw-bench (RL-only mode)，每 N 个场景触发一次 RL 训练。
+rl_only_run.py - Run the benchmark with the MetaClaw proxy in RL-only mode.
 
-流程：
-  1. 自动分配空闲端口，生成临时配置文件
-  2. 后台启动 PROXY_SCRIPT (metaclaw start)，等待就绪
-  3. 执行 metaclaw-bench run --scene-per-train N
-  4. 全部流程完成后终止 proxy 进程组，清理临时文件
+The proxy performs reinforcement learning (policy gradient via tinker) every
+SCENE_PER_TRAIN completed test scenes.  No skills or memory are active.
+
+Set BENCHMARK_BASE_URL, BENCHMARK_API_KEY, BENCHMARK_MODEL, TINKER_KEY,
+TINKER_MODEL, and PRM_MODEL before running.
+See scripts/_env_arg_example.sh for a template.
 """
 
 import json
@@ -24,40 +25,33 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
+_SCRIPT_DIR    = Path(__file__).resolve().parent
+_METACLAW_ROOT = Path(os.environ.get("METACLAW_ROOT") or _SCRIPT_DIR.parent.parent)
 
-# ===================== 核心配置（改这里就行）=====================
+
+# ===================== Configuration =====================
 class cfg:
-    # 日志文件路径（若已存在，自动追加 _1/_2 后缀）
-    LOG_FILE = "/home/xkaiwen/workspace/metaclaw-test/benchmark/logs/rl_only_run/bench_run.log"
-
-    # metaclaw-bench 可执行文件路径
-    BENCH_BIN = "/home/xkaiwen/miniconda3/bin/metaclaw-bench"
-
-    # run 命令参数
-    BENCH_INPUT   = "/home/xkaiwen/workspace/metaclaw-test/benchmark/data/metaclaw-bench/all_tests_metaclaw.json"
-    BENCH_OUTPUT  = "/home/xkaiwen/workspace/metaclaw-test/benchmark/results"
-    BENCH_COUNT   = 3    # -n (retry)
-
-    # 每多少个场景触发一次 RL 训练（设为 1 = 每个 day 训练一次）
-    SCENE_PER_TRAIN = 5
-
-    # 加载 API Key 的 shell 脚本（设为 None 则跳过）
-    API_KEY_SCRIPT = "/home/xkaiwen/workspace/utils/apikey/metaclaw_cfg.sh"
-
-    PROXY_SCRIPT = "/home/xkaiwen/workspace/metaclaw-test/benchmark/scripts/proxy_run.py"
-    PROXY_CONFIG = "/home/xkaiwen/workspace/metaclaw-test/benchmark/scripts/config/rl-only.yaml"
-# =================================================================
+    LOG_FILE      = str(_METACLAW_ROOT / "benchmark" / "logs" / "rl_only_run" / "bench_run.log")
+    BENCH_BIN     = os.environ.get("METACLAW_BENCH_BIN", "metaclaw-bench")
+    BENCH_INPUT   = str(_METACLAW_ROOT / "benchmark" / "data" / "metaclaw-bench" / "all_tests_metaclaw.json")
+    BENCH_OUTPUT  = str(_METACLAW_ROOT / "benchmark" / "results")
+    BENCH_COUNT   = 3    # -n  retries per failed question
+    SCENE_PER_TRAIN = 5  # trigger RL training every N completed scenes
+    API_KEY_SCRIPT = os.environ.get("METACLAW_API_KEY_SCRIPT")
+    PROXY_SCRIPT  = str(_SCRIPT_DIR / "proxy_run.py")
+    PROXY_CONFIG  = str(_SCRIPT_DIR / "config" / "rl-only.yaml")
+# =========================================================
 
 
 def find_free_port() -> int:
-    """让操作系统分配一个空闲端口并返回。"""
+    """Return an available TCP port on loopback."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
         return s.getsockname()[1]
 
 
 def resolve_log_path(log_file: str) -> Path:
-    """若目标路径已存在，依次尝试 _1/_2/... 后缀直到找到空位。"""
+    """Return a unique log path, appending _1/_2/... if the file already exists."""
     p = Path(log_file)
     p.parent.mkdir(parents=True, exist_ok=True)
     if not p.exists():
@@ -72,8 +66,7 @@ def resolve_log_path(log_file: str) -> Path:
 
 
 def load_env_from_shell(script_path: str) -> dict:
-    """source shell 脚本后，将 os.environ 以 JSON 写入临时文件读回，
-    完全隔离 shell 脚本自身的 stdout 输出，避免 JSON 解析污染。"""
+    """Source a shell script and return the resulting environment as a dict."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         tmp_path = f.name
     try:
@@ -82,10 +75,10 @@ def load_env_from_shell(script_path: str) -> dict:
              f"source {script_path} && "
              "python3 -c 'import os,json; json.dump(dict(os.environ),open(os.environ[\"__TMP_ENV\"],\"w\"))'"],
             env={**os.environ, "__TMP_ENV": tmp_path},
-            text=True
+            text=True,
         )
         if result.returncode != 0:
-            raise RuntimeError(f"加载 env 脚本失败：{script_path}")
+            raise RuntimeError(f"Failed to load env script: {script_path}")
         with open(tmp_path) as f:
             return json.load(f)
     finally:
@@ -93,8 +86,7 @@ def load_env_from_shell(script_path: str) -> dict:
 
 
 def write_proxy_config(env: dict, port: int) -> str:
-    """读取 PROXY_CONFIG yaml，将 ${VAR} 替换为 env 中对应值，
-    覆写 proxy.port，写入临时配置文件并返回其路径。"""
+    """Expand ${VAR} placeholders in PROXY_CONFIG and override proxy.port."""
     import yaml as _yaml
 
     with open(cfg.PROXY_CONFIG, encoding="utf-8") as f:
@@ -104,12 +96,11 @@ def write_proxy_config(env: dict, port: int) -> str:
         var = m.group(1)
         val = env.get(var, "")
         if not val:
-            print(f"[config] 警告：环境变量 {var} 未设置，替换为空字符串")
+            print(f"[config] WARNING: env var {var} not set, substituting empty string")
         return val
 
     content = re.sub(r'\$\{(\w+)\}', replace, content)
 
-    # 解析后覆写 proxy.port
     data = _yaml.safe_load(content) or {}
     data.setdefault("proxy", {})["port"] = port
 
@@ -119,14 +110,13 @@ def write_proxy_config(env: dict, port: int) -> str:
     )
     _yaml.dump(data, tmp, default_flow_style=False, allow_unicode=True)
     tmp.close()
-    print(f"[config] 临时配置已写入 {tmp.name} (port={port})")
+    print(f"[config] Temporary config written to {tmp.name} (port={port})")
     return tmp.name
 
 
 def start_proxy(env: dict, config_path: str, port: int) -> subprocess.Popen:
-    """后台启动 PROXY_SCRIPT（stdout/stderr 丢弃，proxy 有自己的日志），
-    轮询 /healthz 确认就绪后返回进程对象。"""
-    print(f"[proxy] 正在启动 proxy (RL-only mode, port={port})...")
+    """Start PROXY_SCRIPT in the background and wait until /healthz returns 200."""
+    print(f"[proxy] Starting proxy in RL-only mode (port={port})...")
     proxy_env = dict(env) if env else dict(os.environ)
     proxy_env["METACLAW_CONFIG_FILE"] = config_path
     proc = subprocess.Popen(
@@ -138,28 +128,30 @@ def start_proxy(env: dict, config_path: str, port: int) -> subprocess.Popen:
     )
 
     url = f"http://localhost:{port}/healthz"
-    print("[proxy] 等待就绪...")
+    print("[proxy] Waiting for proxy to become ready...")
     deadline = time.time() + 120
     while time.time() < deadline:
         if proc.poll() is not None:
-            raise RuntimeError(f"[proxy] 进程意外退出（退出码 {proc.returncode}）")
+            raise RuntimeError(
+                f"[proxy] Process exited unexpectedly (exit code {proc.returncode})"
+            )
         try:
             with urllib.request.urlopen(url, timeout=2) as resp:
                 if resp.status == 200:
-                    print("[proxy] 就绪，继续执行 benchmark...")
+                    print("[proxy] Proxy ready, starting benchmark...")
                     return proc
         except Exception:
             pass
         time.sleep(2)
 
-    raise RuntimeError("[proxy] 等待超时（120s），未收到健康检查响应")
+    raise RuntimeError("[proxy] Timed out (120s): no health-check response")
 
 
 def stop_proxy(proc: subprocess.Popen):
-    """向 proxy 进程组发送 SIGTERM，超时后强制 SIGKILL。"""
+    """Send SIGTERM to the proxy process group; SIGKILL after 10s if needed."""
     if proc.poll() is not None:
         return
-    print("[proxy] 正在停止 proxy...")
+    print("[proxy] Stopping proxy...")
     try:
         pgid = os.getpgid(proc.pid)
         os.killpg(pgid, signal.SIGTERM)
@@ -173,11 +165,11 @@ def stop_proxy(proc: subprocess.Popen):
         except (ProcessLookupError, PermissionError):
             proc.kill()
         proc.wait()
-    print("[proxy] proxy 已停止")
+    print("[proxy] Proxy stopped.")
 
 
 def run_command(cmd: list, log_path: Path, env: dict = None) -> int:
-    """执行命令，通过伪终端(pty)实时输出到终端和日志文件，返回退出码。"""
+    """Run *cmd* via a pseudo-terminal so output is line-buffered in real time."""
     master_fd, slave_fd = pty.openpty()
     proc = subprocess.Popen(
         cmd,
@@ -212,23 +204,23 @@ def run_command(cmd: list, log_path: Path, env: dict = None) -> int:
 
 
 def append_timing(log_path: Path, start: datetime, end: datetime):
-    """将计时结果追加到日志并打印到终端。"""
+    """Append a timing summary to the log file and print it to the terminal."""
     elapsed = (end - start).total_seconds()
     lines = [
         "",
         "----------------------------------------",
-        "命令执行完成！",
-        f"开始时间：{start.strftime('%Y-%m-%d %H:%M:%S')}",
-        f"结束时间：{end.strftime('%Y-%m-%d %H:%M:%S')}",
-        f"总耗时：{elapsed:.3f} 秒",
+        "Done.",
+        f"Start:   {start.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"End:     {end.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Elapsed: {elapsed:.3f}s",
         "========================================",
         "",
     ]
     with open(log_path, "a", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     print("----------------------------------------")
-    print(f"命令执行完成！总耗时：{elapsed:.3f} 秒")
-    print(f"全部信息已写入日志文件：{log_path}")
+    print(f"Done. Elapsed: {elapsed:.3f}s")
+    print(f"Output logged to: {log_path}")
 
 
 def main():
@@ -240,23 +232,18 @@ def main():
     if cfg.API_KEY_SCRIPT:
         env = load_env_from_shell(cfg.API_KEY_SCRIPT)
 
-    # 第零步：分配空闲端口
     port = find_free_port()
-    print(f"[port] 自动分配端口: {port}")
+    print(f"[port] Allocated free port: {port}")
 
-    # 第一步：生成临时配置文件
     tmp_config_path = write_proxy_config(env or os.environ.copy(), port)
 
-    # 启动 proxy，等待就绪
     proxy_proc = start_proxy(env or os.environ.copy(), tmp_config_path, port)
 
-    # 将动态端口注入 metaclaw-bench 的环境变量，供 openclaw 配置解析
     bench_env = dict(env) if env else dict(os.environ)
     bench_env["METACLAW_PROXY_PORT"] = str(port)
 
     start = datetime.now()
     try:
-        # run（worker 强制为 1，启用 scene-per-train）
         run_cmd = [
             cfg.BENCH_BIN, "run",
             "-i", cfg.BENCH_INPUT,
@@ -269,10 +256,9 @@ def main():
 
     finally:
         stop_proxy(proxy_proc)
-        # 清理临时配置文件
         if os.path.isfile(tmp_config_path):
             os.unlink(tmp_config_path)
-            print(f"[config] 已清理临时配置文件: {tmp_config_path}")
+            print(f"[config] Cleaned up temporary config: {tmp_config_path}")
 
     end = datetime.now()
     append_timing(log_path, start, end)

@@ -1,21 +1,15 @@
 #!/usr/bin/env python3
 """
-rl_only_memory_run.py — 运行 metaclaw-bench (RL-only + memory) 全量实验。
+rl_only_memory_run.py - Run the benchmark with RL + memory (no skills).
 
-融合 rl_only_run 和 memory_run 的特性：
-  - RL: 每 N 个场景触发一次训练 (scene-per-train)
-  - memory: 创建独立的 memory 存储目录，运行后收集统计并生成报告
-  - 无 skills
-  - 动态端口分配，支持并行运行
+Combines rl_only_run.py and memory_run.py:
+  - RL: policy gradient training every SCENE_PER_TRAIN completed scenes.
+  - Memory: extract and inject memories across days; generate a memory report.
+  - No skills.
 
-流程：
-  1. 分配空闲端口
-  2. 创建本次运行的独立 memory 目录
-  3. 生成临时配置文件（memory.dir + proxy.port）
-  4. 后台启动 proxy，等待就绪
-  5. metaclaw-bench run（启用 scene-per-train + memory ingest）
-  6. benchmark 结束后收集 memory 统计，生成报告
-  7. 停止 proxy，清理临时文件
+Set BENCHMARK_BASE_URL, BENCHMARK_API_KEY, BENCHMARK_MODEL, TINKER_KEY,
+TINKER_MODEL, and PRM_MODEL before running.
+See scripts/_env_arg_example.sh for a template.
 """
 
 import json
@@ -34,43 +28,34 @@ import urllib.error
 from datetime import datetime
 from pathlib import Path
 
+_SCRIPT_DIR    = Path(__file__).resolve().parent
+_METACLAW_ROOT = Path(os.environ.get("METACLAW_ROOT") or _SCRIPT_DIR.parent.parent)
 
-# ===================== 核心配置（改这里就行）=====================
+
+# ===================== Configuration =====================
 class cfg:
-    # 日志文件路径（若已存在，自动追加 _1/_2 后缀）
-    LOG_FILE = "/home/xkaiwen/workspace/metaclaw-test/benchmark/logs/rl_only_memory_run/bench_run.log"
-
-    # metaclaw-bench 可执行文件路径
-    BENCH_BIN = "/home/xkaiwen/miniconda3/bin/metaclaw-bench"
-
-    # run 命令参数
-    BENCH_INPUT   = "/home/xkaiwen/workspace/metaclaw-test/benchmark/data/metaclaw-bench/all_tests_metaclaw.json"
-    BENCH_OUTPUT  = "/home/xkaiwen/workspace/metaclaw-test/benchmark/results"
-    BENCH_COUNT   = 3    # -n (retry)
-
-    # 每多少个场景触发一次 RL 训练（设为 1 = 每个 day 训练一次）
-    SCENE_PER_TRAIN = 5
-
-    # 加载 API Key 的 shell 脚本（设为 None 则跳过）
-    API_KEY_SCRIPT = "/home/xkaiwen/workspace/utils/apikey/metaclaw_cfg.sh"
-
-    PROXY_SCRIPT = "/home/xkaiwen/workspace/metaclaw-test/benchmark/scripts/proxy_run.py"
-    PROXY_CONFIG = "/home/xkaiwen/workspace/metaclaw-test/benchmark/scripts/config/rl-only-memory.yaml"
-
-    # memory 存储基础路径（每次运行会在此下创建时间戳子目录）
-    MEMORY_STORE_BASE = "/home/xkaiwen/workspace/metaclaw-test/benchmark/memory_runs"
-# =================================================================
+    LOG_FILE      = str(_METACLAW_ROOT / "benchmark" / "logs" / "rl_only_memory_run" / "bench_run.log")
+    BENCH_BIN     = os.environ.get("METACLAW_BENCH_BIN", "metaclaw-bench")
+    BENCH_INPUT   = str(_METACLAW_ROOT / "benchmark" / "data" / "metaclaw-bench" / "all_tests_metaclaw.json")
+    BENCH_OUTPUT  = str(_METACLAW_ROOT / "benchmark" / "results")
+    BENCH_COUNT   = 3    # -n  retries per failed question
+    SCENE_PER_TRAIN = 5  # trigger RL training every N completed scenes
+    API_KEY_SCRIPT = os.environ.get("METACLAW_API_KEY_SCRIPT")
+    PROXY_SCRIPT  = str(_SCRIPT_DIR / "proxy_run.py")
+    PROXY_CONFIG  = str(_SCRIPT_DIR / "config" / "rl-only-memory.yaml")
+    MEMORY_STORE_BASE = str(_METACLAW_ROOT / "benchmark" / "memory_runs")
+# =========================================================
 
 
 def find_free_port() -> int:
-    """让操作系统分配一个空闲端口并返回。"""
+    """Return an available TCP port on loopback."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
         return s.getsockname()[1]
 
 
 def resolve_log_path(log_file: str) -> Path:
-    """若目标路径已存在，依次尝试 _1/_2/... 后缀直到找到空位。"""
+    """Return a unique log path, appending _1/_2/... if the file already exists."""
     p = Path(log_file)
     p.parent.mkdir(parents=True, exist_ok=True)
     if not p.exists():
@@ -85,7 +70,7 @@ def resolve_log_path(log_file: str) -> Path:
 
 
 def load_env_from_shell(script_path: str) -> dict:
-    """source shell 脚本后，将 os.environ 以 JSON 写入临时文件读回。"""
+    """Source a shell script and return the resulting environment as a dict."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         tmp_path = f.name
     try:
@@ -94,10 +79,10 @@ def load_env_from_shell(script_path: str) -> dict:
              f"source {script_path} && "
              "python3 -c 'import os,json; json.dump(dict(os.environ),open(os.environ[\"__TMP_ENV\"],\"w\"))'"],
             env={**os.environ, "__TMP_ENV": tmp_path},
-            text=True
+            text=True,
         )
         if result.returncode != 0:
-            raise RuntimeError(f"加载 env 脚本失败：{script_path}")
+            raise RuntimeError(f"Failed to load env script: {script_path}")
         with open(tmp_path) as f:
             return json.load(f)
     finally:
@@ -105,11 +90,12 @@ def load_env_from_shell(script_path: str) -> dict:
 
 
 def create_memory_run_dir() -> Path:
-    """在 MEMORY_STORE_BASE 下创建以时间戳命名的子目录，并预置 policy.json。"""
+    """Create a timestamped subdirectory under MEMORY_STORE_BASE and write a
+    benchmark-optimised policy.json preset."""
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = Path(cfg.MEMORY_STORE_BASE) / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[memory] 本次运行 memory 存储目录: {run_dir}")
+    print(f"[memory] Memory store for this run: {run_dir}")
 
     policy = {
         "version": 1,
@@ -132,16 +118,13 @@ def create_memory_run_dir() -> Path:
         "notes": ["bench-optimized: high importance, low recency, semantic-boosted"],
     }
     policy_path = run_dir / "policy.json"
-    policy_path.write_text(
-        json.dumps(policy, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-    print(f"[memory] 预置 policy.json: {policy_path}")
+    policy_path.write_text(json.dumps(policy, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"[memory] Policy preset written: {policy_path}")
     return run_dir
 
 
 def write_proxy_config(env: dict, memory_dir: Path, port: int) -> str:
-    """读取 PROXY_CONFIG yaml，将 ${VAR} 替换为 env 中对应值，
-    覆写 memory.dir 和 proxy.port，写入临时配置文件并返回其路径。"""
+    """Expand ${VAR} placeholders in PROXY_CONFIG and override memory.dir / proxy.port."""
     import yaml as _yaml
 
     with open(cfg.PROXY_CONFIG, encoding="utf-8") as f:
@@ -151,7 +134,7 @@ def write_proxy_config(env: dict, memory_dir: Path, port: int) -> str:
         var = m.group(1)
         val = env.get(var, "")
         if not val:
-            print(f"[config] 警告：环境变量 {var} 未设置，替换为空字符串")
+            print(f"[config] WARNING: env var {var} not set, substituting empty string")
         return val
 
     content = re.sub(r'\$\{(\w+)\}', replace, content)
@@ -166,13 +149,13 @@ def write_proxy_config(env: dict, memory_dir: Path, port: int) -> str:
     )
     _yaml.dump(data, tmp, default_flow_style=False, allow_unicode=True)
     tmp.close()
-    print(f"[config] 临时配置已写入 {tmp.name} (port={port})")
+    print(f"[config] Temporary config written to {tmp.name} (port={port})")
     return tmp.name
 
 
 def start_proxy(env: dict, config_path: str, port: int) -> subprocess.Popen:
-    """后台启动 PROXY_SCRIPT，轮询 /healthz 确认就绪后返回进程对象。"""
-    print(f"[proxy] 正在启动 proxy (RL-only+memory, port={port})...")
+    """Start PROXY_SCRIPT in the background and wait until /healthz returns 200."""
+    print(f"[proxy] Starting proxy in RL-only+memory mode (port={port})...")
     proxy_env = dict(env) if env else dict(os.environ)
     proxy_env["METACLAW_CONFIG_FILE"] = config_path
     proc = subprocess.Popen(
@@ -184,27 +167,29 @@ def start_proxy(env: dict, config_path: str, port: int) -> subprocess.Popen:
     )
 
     url = f"http://localhost:{port}/healthz"
-    print("[proxy] 等待就绪...")
+    print("[proxy] Waiting for proxy to become ready...")
     deadline = time.time() + 120
     while time.time() < deadline:
         if proc.poll() is not None:
-            raise RuntimeError(f"[proxy] 进程意外退出（退出码 {proc.returncode}）")
+            raise RuntimeError(
+                f"[proxy] Process exited unexpectedly (exit code {proc.returncode})"
+            )
         try:
             with urllib.request.urlopen(url, timeout=2) as resp:
                 if resp.status == 200:
-                    print("[proxy] 就绪，继续执行 benchmark...")
+                    print("[proxy] Proxy ready, starting benchmark...")
                     return proc
         except Exception:
             pass
         time.sleep(2)
-    raise RuntimeError("[proxy] 等待超时（120s），未收到健康检查响应")
+    raise RuntimeError("[proxy] Timed out (120s): no health-check response")
 
 
 def stop_proxy(proc: subprocess.Popen):
-    """向 proxy 进程组发送 SIGTERM，超时后强制 SIGKILL。"""
+    """Send SIGTERM to the proxy process group; SIGKILL after 10s if needed."""
     if proc.poll() is not None:
         return
-    print("[proxy] 正在停止 proxy...")
+    print("[proxy] Stopping proxy...")
     try:
         pgid = os.getpgid(proc.pid)
         os.killpg(pgid, signal.SIGTERM)
@@ -218,11 +203,11 @@ def stop_proxy(proc: subprocess.Popen):
         except (ProcessLookupError, PermissionError):
             proc.kill()
         proc.wait()
-    print("[proxy] proxy 已停止")
+    print("[proxy] Proxy stopped.")
 
 
 def run_command(cmd: list, log_path: Path, env: dict = None) -> int:
-    """执行命令，通过伪终端(pty)实时输出到终端和日志文件，返回退出码。"""
+    """Run *cmd* via a pseudo-terminal so output is line-buffered in real time."""
     master_fd, slave_fd = pty.openpty()
     proc = subprocess.Popen(
         cmd, stdout=slave_fd, stderr=slave_fd, env=env, close_fds=True,
@@ -253,28 +238,28 @@ def run_command(cmd: list, log_path: Path, env: dict = None) -> int:
 
 
 def append_timing(log_path: Path, start: datetime, end: datetime):
-    """将计时结果追加到日志并打印到终端。"""
+    """Append a timing summary to the log file and print it to the terminal."""
     elapsed = (end - start).total_seconds()
     lines = [
         "",
         "----------------------------------------",
-        "命令执行完成！",
-        f"开始时间：{start.strftime('%Y-%m-%d %H:%M:%S')}",
-        f"结束时间：{end.strftime('%Y-%m-%d %H:%M:%S')}",
-        f"总耗时：{elapsed:.3f} 秒",
+        "Done.",
+        f"Start:   {start.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"End:     {end.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Elapsed: {elapsed:.3f}s",
         "========================================",
         "",
     ]
     with open(log_path, "a", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     print("----------------------------------------")
-    print(f"命令执行完成！总耗时：{elapsed:.3f} 秒")
-    print(f"全部信息已写入日志文件：{log_path}")
+    print(f"Done. Elapsed: {elapsed:.3f}s")
+    print(f"Output logged to: {log_path}")
 
 
-# ------------------------------------------------------------------ #
-# Memory 统计采集与报告生成                                             #
-# ------------------------------------------------------------------ #
+# ---------------------------------------------------------------------------
+# Memory stats collection
+# ---------------------------------------------------------------------------
 
 def _api_get(path: str, port: int) -> dict | None:
     url = f"http://localhost:{port}{path}"
@@ -283,29 +268,29 @@ def _api_get(path: str, port: int) -> dict | None:
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read().decode())
     except Exception as e:
-        print(f"[memory] 警告：请求 {path} 失败: {e}")
+        print(f"[memory] WARNING: request to {path} failed: {e}")
         return None
 
 
 def collect_memory_stats(port: int) -> dict:
-    """从运行中的 proxy 收集 memory 统计数据。"""
-    print("[memory] 正在从 proxy 收集 memory 统计数据...")
+    """Query the running proxy for memory statistics."""
+    print("[memory] Collecting memory stats from proxy...")
     data = {}
-    data["stats"] = _api_get("/v1/memory/stats", port) or {}
-    data["summary"] = _api_get("/v1/memory/summary", port) or {}
-    data["health"] = _api_get("/v1/memory/health", port) or {}
-    data["operator_report"] = _api_get("/v1/memory/operator-report", port) or {}
+    data["stats"]             = _api_get("/v1/memory/stats",             port) or {}
+    data["summary"]           = _api_get("/v1/memory/summary",           port) or {}
+    data["health"]            = _api_get("/v1/memory/health",            port) or {}
+    data["operator_report"]   = _api_get("/v1/memory/operator-report",   port) or {}
     data["feedback_analysis"] = _api_get("/v1/memory/feedback-analysis", port) or {}
-    print("[memory] 统计数据收集完成")
+    print("[memory] Memory stats collected.")
     return data
 
 
 def write_memory_report(mem_data: dict, output_dir: str, elapsed_seconds: float):
-    """将 memory 统计数据写入 memory_report.md / .json。"""
+    """Write memory_report.md and memory_report.json to *output_dir*."""
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     report_path = out / "memory_report.md"
-    json_path = out / "memory_report.json"
+    json_path   = out / "memory_report.json"
 
     stats = mem_data.get("stats", {})
 
@@ -320,8 +305,8 @@ def write_memory_report(mem_data: dict, output_dir: str, elapsed_seconds: float)
         "| Metric | Value |",
         "|--------|-------|",
         f"| Active memories | {stats.get('active', 0)} |",
-        f"| Total memories | {stats.get('total', 0)} |",
-        f"| Scope | {stats.get('scope_id', 'default')} |",
+        f"| Total memories  | {stats.get('total', 0)} |",
+        f"| Scope           | {stats.get('scope_id', 'default')} |",
         "",
     ]
 
@@ -357,15 +342,14 @@ def write_memory_report(mem_data: dict, output_dir: str, elapsed_seconds: float)
             lines.append("")
 
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[memory] memory_report.md 已写入: {report_path}")
-
+    print(f"[memory] Written: {report_path}")
     json_path.write_text(json.dumps(mem_data, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[memory] memory_report.json 已写入: {json_path}")
+    print(f"[memory] Written: {json_path}")
 
 
-# ------------------------------------------------------------------ #
-# 主流程                                                               #
-# ------------------------------------------------------------------ #
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main():
     os.system("clear")
@@ -376,27 +360,20 @@ def main():
     if cfg.API_KEY_SCRIPT:
         env = load_env_from_shell(cfg.API_KEY_SCRIPT)
 
-    # 分配空闲端口
     port = find_free_port()
-    print(f"[port] 自动分配端口: {port}")
+    print(f"[port] Allocated free port: {port}")
 
-    # 创建本次运行的独立 memory 目录
     memory_dir = create_memory_run_dir()
-
-    # 生成临时配置文件
     tmp_config_path = write_proxy_config(env or os.environ.copy(), memory_dir, port)
 
-    # 启动 proxy，等待就绪
     proxy_proc = start_proxy(env or os.environ.copy(), tmp_config_path, port)
 
-    # 将动态端口注入 metaclaw-bench 的环境变量
     bench_env = dict(env) if env else dict(os.environ)
     bench_env["METACLAW_PROXY_PORT"] = str(port)
 
     start = datetime.now()
     end = start
     try:
-        # run（worker=1，scene-per-train + memory ingest）
         run_cmd = [
             cfg.BENCH_BIN, "run",
             "-i", cfg.BENCH_INPUT,
@@ -412,7 +389,6 @@ def main():
         end = datetime.now()
         elapsed = (end - start).total_seconds()
 
-        # benchmark 完成后收集 memory 统计
         mem_data = collect_memory_stats(port)
         write_memory_report(mem_data, cfg.BENCH_OUTPUT, elapsed)
 
@@ -420,7 +396,7 @@ def main():
         stop_proxy(proxy_proc)
         if os.path.isfile(tmp_config_path):
             os.unlink(tmp_config_path)
-            print(f"[config] 已清理临时配置文件: {tmp_config_path}")
+            print(f"[config] Cleaned up temporary config: {tmp_config_path}")
         end = datetime.now()
 
     append_timing(log_path, start, end)
