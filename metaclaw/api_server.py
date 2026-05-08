@@ -612,6 +612,33 @@ class MetaClawAPIServer:
         async def healthz():
             return {"ok": True}
 
+        @app.get("/health")
+        async def health():
+            return {"ok": True}
+
+        @app.get("/status")
+        async def status():
+            return {
+                "ok": True,
+                "mode": self.config.mode,
+                "model": self._served_model,
+                "port": self.config.proxy_port,
+            }
+
+        @app.get("/v1/models")
+        async def list_models():
+            return {
+                "object": "list",
+                "data": [
+                    {
+                        "id": self._served_model,
+                        "object": "model",
+                        "created": 0,
+                        "owned_by": "metaclaw",
+                    }
+                ],
+            }
+
         @app.post("/v1/chat/completions")
         async def chat_completions(
             request: Request,

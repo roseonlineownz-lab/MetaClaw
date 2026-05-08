@@ -103,7 +103,11 @@ class MetaClawTrainer:
         from .log_color import setup_logging
         setup_logging()
 
-        import tinker
+        try:
+            import tinker
+        except ImportError:
+            logger.warning("[Trainer] tinker module not installed — RL training unavailable")
+            return
 
         # Optional Weights & Biases logging.
         # Enable by setting WANDB_DISABLED to anything except "true"/"1"/"yes"/"on".
@@ -246,7 +250,11 @@ class MetaClawTrainer:
 
     async def _train_on_batch(self, batch: list[ConversationSample], step_idx: int):
         """Run one GRPO-style RL update on *batch*."""
-        import tinker
+        try:
+            import tinker
+        except ImportError:
+            logger.warning("[Trainer] tinker not installed — skipping train step")
+            return
 
         # Compute advantages (centre-normalise within batch)
         advantages = compute_advantages(batch)

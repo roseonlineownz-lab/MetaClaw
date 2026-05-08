@@ -62,11 +62,19 @@ class MetaClawLauncher:
         # "auto" mode = RL with scheduler enabled
         if mode == "auto":
             cfg.scheduler_enabled = True
-            await self._start_rl(cfg)
+            try:
+                await self._start_rl(cfg)
+            except Exception as exc:
+                logger.warning("[Launcher] RL start failed (%s) — falling back to skills_only", exc)
+                await self._start_skills_only(cfg)
         elif mode == "skills_only":
             await self._start_skills_only(cfg)
         else:
-            await self._start_rl(cfg)
+            try:
+                await self._start_rl(cfg)
+            except Exception as exc:
+                logger.warning("[Launcher] RL start failed (%s) — falling back to skills_only", exc)
+                await self._start_skills_only(cfg)
 
     def stop(self):
         self._stop_event.set()
@@ -393,9 +401,10 @@ class MetaClawLauncher:
              f"metaclaw/{model_id}"],
             ["openclaw", "config", "set", "agents.defaults.sandbox.mode", "off"],
         ]
-        # Skip gateway restart if npx install already restarted it.
-        if not weixin_just_installed:
-            commands.append(["openclaw", "gateway", "restart"])
+        # Skip gateway restart to avoid disconnecting active sessions.
+        # Gateway picks up config changes on next restart anyway.
+        # if not weixin_just_installed:
+        #     commands.append(["openclaw", "gateway", "restart"])
 
         for cmd in commands:
             cmd_timeout = 90 if "gateway" in cmd else 15
